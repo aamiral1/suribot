@@ -1,0 +1,90 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Suri Marketing — Indigo Glass Widget</title>
+  <link rel="stylesheet" href="indigo-glass.css" />
+</head>
+<body>
+
+  <!-- Optional demo background (remove if embedding in a real site) -->
+  <div class="demo-bg" aria-hidden="true">
+    <div class="demo-bg__blob demo-bg__blob--1"></div>
+    <div class="demo-bg__blob demo-bg__blob--2"></div>
+    <p class="demo-label">Suri Marketing · Website Demo</p>
+  </div>
+
+  <!-- Chat Widget -->
+  <div class="vb" role="dialog" aria-label="Suri Marketing Chat">
+
+    <!-- Header -->
+    <div class="vb-header">
+      <div class="vb-header-bg"></div>
+
+      <div class="vb-avatar" aria-hidden="true">✦</div>
+
+      <div class="vb-header-text">
+        <div class="vb-name">Suri Marketing</div>
+        <div class="vb-tagline">Digital Growth · Always online</div>
+      </div>
+
+      <div class="vb-dots" aria-label="Widget controls">
+        <button class="vb-dot" type="button" aria-label="Minimise">–</button>
+        <button class="vb-dot" type="button" aria-label="Close">✕</button>
+      </div>
+    </div>
+
+    <!-- Chips -->
+    <div class="vb-chips" role="group" aria-label="Quick replies">
+      <button class="vb-chip" type="button">📈 SEO Services</button>
+      <button class="vb-chip" type="button">💰 Pricing</button>
+      <button class="vb-chip" type="button">📅 Book a call</button>
+      <button class="vb-chip" type="button">💬 Talk to us</button>
+    </div>
+
+    <!-- Messages -->
+    <div class="vb-messages" aria-label="Messages">
+      <div class="vb-msg-row">
+        <div class="vb-msg-avatar" aria-hidden="true">✦</div>
+        <div class="vb-bubble agent">
+          Hi there! I'm Suri's AI assistant. Whether you need info on our services or you're ready to grow — I've got you covered.
+        </div>
+      </div>
+
+      <div class="vb-msg-row user">
+        <div class="vb-bubble user">
+          I'm interested in PPC management.
+        </div>
+      </div>
+      
+    </div>
+
+    <!-- Booking CTA -->
+    <button class="vb-cta" type="button" aria-label="Book a free strategy call">
+      <div class="vb-cta-icon" aria-hidden="true">📅</div>
+      <div class="vb-cta-text">
+        <div class="vb-cta-label">Ready to grow?</div>
+        <div class="vb-cta-action">Book a free strategy call</div>
+      </div>
+      <div class="vb-cta-arrow" aria-hidden="true">›</div>
+    </button>
+
+    <!-- Footer -->
+    <div class="vb-footer" role="group" aria-label="Message input">
+      <input class="vb-input" type="text" placeholder="Type your message…" />
+      <button class="vb-send" type="button" aria-label="Send">
+        <svg class="arrow-icon" viewBox="0 0 24 24" fill="none">
+          <line x1="5" y1="12" x2="19" y2="12"></line>
+          <polyline points="12 5 19 12 12 19"></polyline>
+        </svg>
+      </button>
+    </div>
+
+    <div class="vb-powered">Suri Marketing · AI Assistant</div>
+  </div>
+
+  <script type="module" src="main.js"></script>
+
+</body>
+</html>
