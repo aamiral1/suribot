@@ -3,8 +3,9 @@ const messageSendButton = document.querySelector(".vb .vb-footer button.vb-send"
 const inputBar = document.querySelector(".vb .vb-footer input.vb-input");
 const messageWindow = document.querySelector(".vb-messages")
 
+const BASE = "http://127.0.0.1:5000/"
+
 async function addMessage(message, role){
-    console.log("start");
     const row = document.createElement("div");
     row.classList.add("vb-msg-row");
 
@@ -37,13 +38,39 @@ async function addMessage(message, role){
 
 async function sendMessage(){
     const input = inputBar.value.trim();
-    console.log(input);
+
+    if(!input){
+        return;
+    }
+    // console.log(input);
 
     addMessage(input, "user");
     inputBar.value = "";
 
     // TESTING - REMOVE LATER
     addMessage("How can I help you?", "agent");
+
+    // POST REQUEST TESTING
+    try {
+        const res = await fetch(BASE + '/api', {
+            method: "POST",
+            headers: {
+                "Content-Type": "application/json"
+            },
+            body: JSON.stringify({message: input})
+        });
+        const data = await res.json();
+
+        if (!res.ok) {
+            console.log(data.description);
+            return;
+        }
+
+        console.log(data);
+
+    } catch (error) {
+        console.log(error);
+    }
 }
 
 
