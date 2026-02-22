@@ -48,7 +48,7 @@ async function sendMessage(){
     inputBar.value = "";
 
     // TESTING - REMOVE LATER
-    addMessage("How can I help you?", "agent");
+    // addMessage("How can I help you?", "agent");
 
     // POST REQUEST TESTING
     try {
@@ -65,8 +65,11 @@ async function sendMessage(){
             console.log(data.description);
             return;
         }
+        const gpt_response = data['response'];
 
-        console.log(data);
+        console.log("GPT: " + gpt_response);
+
+        addMessage(gpt_response, "agent");
 
     } catch (error) {
         console.log(error);
