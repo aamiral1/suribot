@@ -7,5 +7,17 @@
 
     <body>
         <h1>Admin Dashboard</h1>
+
+        <form id = 'upload_form' method="POST" enctype="multipart/form-data">
+            {{form.hidden_tag()}}
+            {{form.file()}}
+            <button type="submit">Upload</button>
+        </form>
+
+        <button id="extract_btn">Extract Text</button>
+
+        <div id="text_field"></div>
     </body>
+
+    <script type="module" src="{{ url_for('static',filename='js/admin.js') }}"></script>
 </html>
