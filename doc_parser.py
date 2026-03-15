@@ -1,5 +1,7 @@
 from pdf2image import convert_from_path
 import os
+import datetime
+from exceptions import ExtractionTimeOut
 
 OCR_PROMPT = """
 You are a document-to-text conversion engine for building a searchable knowledge base.
@@ -97,12 +99,17 @@ FINAL REQUIREMENTS:
 - Ensure output is readable as standalone text without needing the original layout.
 """
 
+
 def __create_file(client, file_path):
     with open(file_path, "rb") as f:
         result = client.files.create(file=f, purpose="vision")
     return result.id
 
+
 def extract_doc_info(client, pdf_file_path, images_dir_name):
+    start_time = datetime.datetime.now()
+    max_time = 300
+
     images = convert_from_path(pdf_file_path)
 
     doc_name = os.path.splitext(os.path.basename(pdf_file_path))[0]
@@ -112,6 +119,11 @@ def extract_doc_info(client, pdf_file_path, images_dir_name):
     all_extracted_texts = []
 
     for page_no, img in enumerate(images, start=1):
+        delta_time = datetime.datetime.now() - start_time
+
+        if delta_time.total_seconds() > max_time:
+            raise ExtractionTimeOut("Document extraction exceeded max time allowed.")
+
         file_path = os.path.join(directory_name, f"page{page_no}.png")
         img.save(file_path, "PNG")
 
@@ -122,7 +134,10 @@ def extract_doc_info(client, pdf_file_path, images_dir_name):
             response = client.responses.create(
                 model="gpt-4.1-mini",
                 input=[
-                    {"role": "system", "content": "You are a document-to-text conversion engine."},
+                    {
+                        "role": "system",
+                        "content": "You are a document-to-text conversion engine.",
+                    },
                     {
                         "role": "user",
                         "content": [
@@ -142,7 +157,9 @@ def extract_doc_info(client, pdf_file_path, images_dir_name):
             all_extracted_texts.append(f"--- PAGE {page_no} ---\n{text}".strip())
 
         except Exception as e:
-            all_extracted_texts.append(f"--- PAGE {page_no} ---\n[ERROR extracting page: {e}]")
+            all_extracted_texts.append(
+                f"--- PAGE {page_no} ---\n[ERROR extracting page: {e}]"
+            )
         finally:
             if file_id is not None:
                 try:

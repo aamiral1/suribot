@@ -3,3 +3,10 @@ __pycache__/
 *.pyc
 .env
 .vscode/
+
+files/
+ocr/
+extracted_text/
+requirements.txt
+
+document_database.db
