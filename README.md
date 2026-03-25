@@ -1,12 +1,12 @@
 # 🧠 RAG Chatbot System for Suri Marketing (In Progress)
 
-This project is a **production-style Retrieval-Augmented Generation (RAG) system** built for Suri Marketing.
+This project is a **production-style Retrieval-Augmented Generation (RAG) system** built for [Suri Marketing](http://surimarketing.co.uk/).
 
 It includes:
 
 - A **customer-facing chatbot interface** embedded into a website  
-- An **admin dashboard** for managing knowledge ingestion and monitoring  
-- A backend pipeline that ingests, processes, and serves knowledge to the chatbot  
+- An **admin dashboard** for managing knowledge ingestion and monitoring the chatbot  
+- A **backend pipeline** that ingests, processes, and serves knowledge to the chatbot  
 
 🚧 **Status: Work in Progress**
 
