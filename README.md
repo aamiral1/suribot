@@ -155,27 +155,29 @@ stateDiagram-v2
 
 ---
 
-## 🚀 Current Features
+## Current Features
 
-- ✅ File upload to AWS S3  
-- ✅ Metadata tracking in Postgres  
-- ✅ Document status polling API  
-- ✅ OCR-based text extraction pipeline  
-- ✅ Extracted text stored in S3  
-- ✅ Threaded async processing  
-- ✅ Basic admin dashboard  
-- ✅ Chat endpoint connected to Open AILLM  
+- File upload to AWS S3  
+- Metadata tracking in Postgres
+- Document transition state machine implementation 
+- Document status polling API
+- Multi-format support (DOCX, images, PDF, etc.) for document ingestion
+- OpenAI-based text extraction pipeline  
+- Storage of artefacts in AWS S3  
+- Threaded async processing (will be moved to Celery & Redis)  
+- An interactive admin dashboard  
+- Multiple REST API to enable seamless communication between system components
 
 ---
 
-## ⚠️ Work in Progress
+## Work in Progress
 
-- ⏳ Vector database integration (core RAG step)  
-- ⏳ Chunking and embedding pipeline  
-- ⏳ Retrieval logic for grounding chatbot responses  
-- ⏳ Replace threading with Celery + Redis
-- ⏳ Improve multi-format support (DOCX, images, HTML)  
-- ⏳ Authentication and security  
+- Vector database integration (core RAG step)  
+- Chunking and embedding pipeline  
+- Retrieval logic for grounding chatbot responses  
+- Replace threading with Celery + Redis
+- Improve multi-format support (DOCX, images, HTML)  
+- Authentication and security  
 
 ---
 
