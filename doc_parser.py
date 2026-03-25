@@ -2,11 +2,20 @@ from pdf2image import convert_from_path
 import os
 import datetime
 from exceptions import ExtractionTimeOut
+from docx import Document
 
 OCR_PROMPT = """
 You are a document-to-text conversion engine for building a searchable knowledge base.
 
-Convert this page image into clean, structured, chunk-ready plain text.
+Convert the provided document into clean, structured, chunk-ready plain text.
+
+Requirements:
+
+Process the document page by page.
+
+For each page, output in the exact format:
+--- PAGE {page_number} ---
+{extracted_text}
 
 STRICT RULES:
 - Output ONLY the extracted/converted content text.
@@ -105,8 +114,7 @@ def __create_file(client, file_path):
         result = client.files.create(file=f, purpose="vision")
     return result.id
 
-
-def extract_doc_info(client, pdf_file_path, images_dir_name):
+def extract_from_pdf(client, pdf_file_path, images_dir_name):
     start_time = datetime.datetime.now()
     max_time = 300
 
@@ -115,6 +123,7 @@ def extract_doc_info(client, pdf_file_path, images_dir_name):
     doc_name = os.path.splitext(os.path.basename(pdf_file_path))[0]
     directory_name = os.path.join(images_dir_name, doc_name)
     os.makedirs(directory_name, exist_ok=True)
+
 
     all_extracted_texts = []
 
@@ -168,3 +177,82 @@ def extract_doc_info(client, pdf_file_path, images_dir_name):
                     pass
 
     return "\n\n".join(all_extracted_texts)
+
+def extract_from_image(client, file_path):
+    file_id = None
+    try:
+        file_id = __create_file(client, file_path)
+
+        response = client.responses.create(
+            model="gpt-4.1-mini",
+            input=[
+                {
+                    "role": "system",
+                    "content": "You are a document-to-text conversion engine.",
+                },
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "input_text", "text": OCR_PROMPT},
+                        {"type": "input_image", "file_id": file_id},
+                    ],
+                },
+            ],
+        )
+
+        text = getattr(response, "output_text", None)
+        if text is None:
+            text = str(response)
+        return text.strip()
+
+    finally:
+        if file_id is not None:
+            try:
+                client.files.delete(file_id)
+            except Exception:
+                pass
+
+
+def extract_from_text_file(client, file_path):
+    with open(file_path, "r", encoding="utf-8") as f:
+        content = f.read()
+
+    response = client.responses.create(
+        model="gpt-4.1-mini",
+        input=[
+            {
+                "role": "system",
+                "content": "You are a document-to-text conversion engine.",
+            },
+            {
+                "role": "user",
+                "content": OCR_PROMPT + "\n\n" + content,
+            },
+        ],
+    )
+
+    text = getattr(response, "output_text", None)
+    if text is None:
+        text = str(response)
+    return text.strip()
+
+
+def extract_from_md(client, file_path):
+    return extract_from_text_file(client, file_path)
+
+
+def extract_doc_info(client, file_path):
+    ext = os.path.splitext(file_path)[1].lower()
+    print("file type: ", ext)
+    
+    if ext == ".pdf":
+        images_dir = os.path.join(os.path.dirname(file_path), "extracted_images")
+        return extract_from_pdf(client, file_path, images_dir)
+    elif ext in (".png", ".jpg", ".jpeg"):
+        return extract_from_image(client, file_path)
+    elif ext == ".txt":
+        return extract_from_text_file(client, file_path)
+    elif ext == ".md":
+        return extract_from_md(client, file_path)
+    else:
+        raise ValueError(f"Unsupported file type: {ext}")

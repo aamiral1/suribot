@@ -7,10 +7,14 @@ from openai import OpenAI
 from werkzeug.utils import secure_filename
 from database import Database
 from doc_parser import extract_doc_info
-from enums import DocumentStatus
+from enums import DocumentStatus, SourceType, AllowedFileTypes
+import boto3
+import botocore
 import threading
 import exceptions as ex
+import datetime
 import os
+import tempfile
 
 load_dotenv()
 
@@ -25,8 +29,19 @@ client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"), timeout=20)
 
 response = client
 
+# Initialise Postgres Database
 db = Database("document_database.db", "documents")
 db.init_schema()
+
+# Initialise AWS S3 Client
+s3 = boto3.resource(
+    service_name="s3",
+    region_name="eu-north-1",
+    aws_access_key_id=os.getenv("AWS_ACCESS_KEY_ID"),
+    aws_secret_access_key=os.getenv("AWS_SECRET_ACCESS_KEY"),
+)
+
+bucket_name = os.getenv("AWS_S3_BUCKET")
 
 
 @app.route("/")
@@ -37,6 +52,7 @@ def home():
 # REST API for backend
 chatbot_args = reqparse.RequestParser()
 chatbot_args.add_argument("message", type=str, help="Message for LLM", required=True)
+
 
 # API that handles communication with Open AI
 class ChatbotAPI(Resource):
@@ -83,24 +99,29 @@ class DocumentStatusAPI(Resource):
             return resp
 
         elif status == DocumentStatus.SUCCESS:
-            # get extracted text file path of document
+            # get extracted text s3 bucket and key of document
             try:
-                path = db.get_extracted_text_file_path(doc_id)
+                s3_bucket, s3_key = db.get_extracted_text_file_path(doc_id)
 
             except Exception as e:
 
-                return jsonify({"status": "error", "has_text": False, "message": "DB Error: " + str(e)})
-                
+                return jsonify(
+                    {
+                        "status": "error",
+                        "has_text": False,
+                        "message": "DB Error: " + str(e),
+                    }
+                )
 
-            # final check
-            if path and os.path.exists(path):
+            # check if file exists in S3
+            if _file_exists(s3, s3_bucket, s3_key):
                 msg = {"status": "success", "has_text": True}
                 resp = jsonify(msg)
                 resp.status_code = 200
 
                 return resp
             else:
-                msg = {"status": "success", "has_text": False}
+                msg = {"status": "error", "has_text": False}
                 resp = jsonify(msg)
                 resp.status_code = 200
 
@@ -123,18 +144,17 @@ class ExtractedDocumentTextAPI(Resource):
     def get(self, doc_id):
         # get extracted text file path of document
         try:
-            file_path = db.get_extracted_text_file_path(doc_id)
+            s3_bucket, s3_key = db.get_extracted_text_file_path(doc_id)
 
         except Exception as e:
             return jsonify({"text": None})
 
-        # if file exists
+        # if extracted text file exists
         text = None
 
-        if file_path and os.path.exists(file_path):
-            # open and extract text
-            with open(file_path, encoding="utf-8") as f:
-                text = f.read()
+        if _file_exists(s3, s3_bucket, s3_key):
+            # retrieve text from the file
+            text = _get_file_text(s3, s3_bucket, s3_key)
 
         # return extracted text in JSON response
         return jsonify({"text": text})
@@ -158,27 +178,44 @@ def admin():
 
     if form.validate_on_submit():
         file = form.file.data  # get the uploaded file data sent from frontend
-        file_path = os.path.join(
-            os.path.abspath(os.path.dirname(__file__)),
-            app.config["UPLOAD_FOLDER"],
-            secure_filename(file.filename),
-        )  # get root dir path
-        if os.path.exists(file_path):
+        file_name = secure_filename(file.filename)
+        file_size = str(_format_size(_get_file_size(file)))
+        file_type = AllowedFileTypes.from_filename(file_name)
+
+        # check if file already exists in S3 bucket
+        if _file_exists(s3, bucket_name, file_name):
             print("File already exits")
 
             msg = {"status": "fail", "error": "File already exists"}
 
             return jsonify(msg), 400
 
-        file.save(file_path)  # Then save the file in local directory
+        # upload file to S3 storage
+        s3.meta.client.upload_fileobj(file, bucket_name, file_name)
 
-        # Register file in database
-        doc_id = db.create(file_path) # automatically sets status of doc to CREATED
+        # Register file entry in database
+        doc_id = db.create(
+            source_type=SourceType.UPLOAD.value,
+            name=file_name,
+            size=file_size,
+            type=file_type.value,
+            upload_date=datetime.datetime.now(),
+            s3_file_bucket=bucket_name,
+            s3_file_key=file_name,
+            s3_extracted_text_bucket="na",
+            s3_extracted_text_key="na"
+        )
 
-        msg = {"status": "ok", "doc_id": doc_id, "doc_path": file_path}
+        msg = {
+            "status": "ok",
+            "doc_id": doc_id,
+            "s3_file_bucket": bucket_name,
+            "s3_file_key": file_name,
+        }
 
         print("File has been uploaded succesfully.")
         print(f"Current status of file is {db.get_status(doc_id)}")
+
         return jsonify(msg), 200
 
     else:
@@ -189,37 +226,38 @@ def admin():
 @app.route("/extract-text", methods=["POST"])
 def extract_text():
     # wrapper function to thread extraction: Replace with Celery later
-    def extraction_job(doc_id, pdf_file_path):
+
+    # AWS S3 - CONTINUE FROM HERE!
+    def extraction_job(doc_id, file_path):
         file_name = doc_id + ".txt"
+        isSuccess = False
+
         try:
-            # begin OpenAI extraction
             extracted_text = extract_doc_info(
                 client=client,
-                pdf_file_path=pdf_file_path,
-                images_dir_name=app.config["OCR_PROCESSING_FOLDER"],
+                file_path=file_path,
             )
 
-            # create directory to store extracted text
-            dir_path = os.path.join(
-                os.path.abspath(os.path.dirname(__file__)),
-                app.config["EXTRACTED_TEXT_FOLDER"],
+            # upload extracted text as file to S3 bucket
+            s3.meta.client.put_object(
+                Bucket=os.getenv("AWS_S3_BUCKET"),
+                Key=secure_filename(file_name),
+                Body=extracted_text.encode("utf-8"),
+                ContentType="text/plain",
             )
-            os.makedirs(dir_path, exist_ok=True)
 
-            # save extracted file as .txt file in above directory
-            file_path = os.path.join(dir_path, file_name)
-            isSuccess = False
-            with open(file_path, "w") as f:
-                f.write(extracted_text)
-                isSuccess = True
-
-            # store extracted text file path in database
+            # register extracted text file path in database
             try:
                 db.set_extraction_text_path(
-                    doc_id=doc_id, extracted_text_path=file_path
+                    doc_id=doc_id,
+                    s3_extracted_text_bucket=bucket_name,
+                    s3_extracted_text_key=secure_filename(file_name),
                 )
+
+                isSuccess = True
+
             except Exception as e:
-                print("Failed to updated extracted file path of document")
+                print("Failed to update extracted file path of document")
                 raise
 
             try:
@@ -253,20 +291,34 @@ def extract_text():
             db.transition_status(doc_id=doc_id, new_status=DocumentStatus.FAILED)
             print(f"Error: {e}")
 
+        finally:
+            if file_path and os.path.exists(file_path):
+                os.remove(file_path)
+
     # get doc id from POST request
     data = request.get_json()
     print(data)
     doc_id = data["doc_id"]
 
-    # extract file path from doc_id based on DB
-    pdf_file_path = db.get_path(doc_id)
-
-    doc_status = db.get_status(doc_id=doc_id)
+    # Check if document is valid to be processed
+    doc_status = db.get_status(doc_id)
 
     if doc_status == DocumentStatus.CREATED or doc_status == DocumentStatus.FAILED:
-        # update doc status to Processing
+        # update doc status to Processing and perform extraction
         try:
-            db.transition_status(doc_id=doc_id, new_status=DocumentStatus.PROCESSING) # set doc status to processing
+            db.transition_status(
+                doc_id=doc_id, new_status=DocumentStatus.PROCESSING
+            )  # set doc status to processing
+
+            # extract file path from doc_id based on DB
+            s3_bucket, s3_key = db.get_file_path(doc_id)
+
+            local_file_path = _download_s3_file_to_temp(s3, s3_bucket, s3_key)
+
+            # successfully extraction starts - replace with Celery
+            threading.Thread(
+                target=extraction_job, args=(doc_id, local_file_path)
+            ).start()  # begin extraction job on thread
 
         except ex.InvalidDocumentStatusTransition as e:
             msg = {
@@ -278,13 +330,10 @@ def extract_text():
 
         except Exception as e:
             msg = {"status": "failed", "message": str(e)}
-
+            db.transition_status(doc_id=doc_id, new_status=DocumentStatus.FAILED)
+            print(f"Error: {e}")
             return jsonify(msg), 500
 
-        # successfully extraction starts
-        threading.Thread(
-            target=extraction_job, args=(doc_id, pdf_file_path)
-        ).start()  # begin extraction job on thread
 
         msg = {"status": "began processing"}
 
@@ -301,6 +350,70 @@ def extract_text():
     else:
         msg = {"status": "error"}
         return jsonify(msg), 500
+
+
+
+# AWS S3 Helper Functions
+def _file_exists(resource, bucket, key):
+    try:
+        resource.meta.client.head_object(Bucket=bucket, Key=key)
+        print(f"File: '{key}' found!")
+        return True
+    except botocore.exceptions.ClientError as e:
+        if e.response["Error"]["Code"] == "404":
+            print(f"File'{key}' File does not exist!")
+            return False
+        else:
+            print("Something else went wrong")
+            return False
+
+
+def _get_file_text(resource, bucket, key):
+    # get the object
+    response = resource.meta.client.get_object(Bucket=bucket, Key=key)
+
+    # Read the file contents
+    file_content = response["Body"].read()
+
+    return file_content.decode("utf-8")
+
+
+def _get_file_size(file):
+    pos = file.stream.tell()
+    file.stream.seek(0, 2)
+    size = file.stream.tell()
+    file.stream.seek(pos)
+    return size
+
+
+def _format_size(size_bytes):
+    for unit in ["B", "KB", "MB", "GB", "TB"]:
+        if size_bytes < 1024:
+            return f"{size_bytes:.2f} {unit}"
+        size_bytes /= 1024
+
+
+def _get_file_type(filename: str) -> AllowedFileTypes:
+    if not filename or "." not in filename:
+        raise ex.InvalidFileType("Invalid file name")
+
+    ext = os.path.splitext(filename)[1].lower().strip(".")  # 'pdf'
+    ext_upper = ext.upper()  # 'PDF'
+
+    try:
+        return AllowedFileTypes(ext_upper)
+    except ValueError:
+        raise ex.InvalidFileType(f"Unsupported file type: {ext_upper}")
+
+def _download_s3_file_to_temp(s3_resource, bucket, key):
+    suffix = os.path.splitext(key)[1] or ".tmp"
+
+    tmp = tempfile.NamedTemporaryFile(delete=False, suffix=suffix)
+    tmp_path = tmp.name
+    tmp.close()
+
+    s3_resource.meta.client.download_file(bucket, key, tmp_path)
+    return tmp_path
 
 
 if __name__ == "__main__":
