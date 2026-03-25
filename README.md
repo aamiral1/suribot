@@ -6,7 +6,9 @@ It includes:
 
 - A **customer-facing chatbot interface** embedded into a website  
 - An **admin dashboard** for managing knowledge ingestion and monitoring the chatbot  
-- A **backend pipeline** that ingests, processes, and serves knowledge to the chatbot  
+- A **backend pipeline** that ingests, processes, and serves knowledge to the chatbot - utilising an RAG architecture integrated with a vector database.
+- Preserves **in-dialogue context** across conversations.
+- Utilises industry standard **sales strategies**.
 
 🚧 **Status: Work in Progress**
 
@@ -17,9 +19,9 @@ It includes:
 The goal of this system is to enable:
 
 - Accurate, **grounded chatbot responses** using company knowledge  
-- Easy ingestion of documents and website content  
-- A simple internal interface for non-technical users to manage data  
-- A scalable architecture for real-world deployment  
+- Easy and user-friendly ingestion of different types of documents and website content (through site-map crawling)
+- A simple internal admin dashboard for non-technical users to monitor, configure and manage the chatbot  
+- A scalable and cloud-native architecture, based on AWS, for real-world deployment
 
 ---
 
