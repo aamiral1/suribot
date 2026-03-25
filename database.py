@@ -61,19 +61,22 @@ class Database:
                 END $$;
 
                 CREATE TABLE IF NOT EXISTS {self.doc_table} (
-                    doc_id TEXT PRIMARY KEY, 
-                    source_type source_format NOT NULL, 
-                    file_name TEXT, 
-                    file_size TEXT NOT NULL, 
-                    file_type format_type NOT NULL, 
+                    doc_id TEXT PRIMARY KEY,
+                    source_type source_format NOT NULL,
+                    file_name TEXT,
+                    file_size TEXT NOT NULL,
+                    file_type format_type NOT NULL,
                     uploaded_date DATE NOT NULL,
                     s3_file_bucket TEXT NOT NULL,
                     s3_file_key TEXT NOT NULL,
-                    status extraction_status NOT NULL, 
+                    status extraction_status NOT NULL,
                     s3_extracted_text_bucket TEXT,
                     s3_extracted_text_key TEXT,
-                    error_msg TEXT
+                    error_msg TEXT,
+                    in_kb BOOLEAN DEFAULT FALSE
                 );
+
+                ALTER TABLE {self.doc_table} ADD COLUMN IF NOT EXISTS in_kb BOOLEAN DEFAULT FALSE;
             """
 
             cursor.execute(create_table_command)
@@ -271,6 +274,42 @@ class Database:
             self._put_conn(connection)
 
         return [s3_bucket, s3_key]
+
+    # returns all rows from the documents table
+    def get_all_documents(self):
+        connection = self._get_conn()
+        cursor = connection.cursor()
+
+        command = f"SELECT * FROM {self.doc_table}"
+
+        try:
+            cursor.execute(command)
+            rows = cursor.fetchall()
+        except Exception as e:
+            connection.rollback()
+            raise Exception(f"Error: {e}")
+        finally:
+            cursor.close()
+            self._put_conn(connection)
+
+        return rows
+
+    # marks a document as added to the knowledge base
+    def set_in_kb(self, doc_id):
+        connection = self._get_conn()
+        cursor = connection.cursor()
+
+        command = f"UPDATE {self.doc_table} SET in_kb = TRUE WHERE doc_id = %s"
+
+        try:
+            cursor.execute(command, (doc_id,))
+            connection.commit()
+        except Exception as e:
+            connection.rollback()
+            raise Exception(f"Error: {e}")
+        finally:
+            cursor.close()
+            self._put_conn(connection)
 
     # private helper functions
     def _get_conn(self):

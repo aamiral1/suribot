@@ -1,23 +1,161 @@
 <!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>SuriBot Admin Dashboard</title>
+  <link rel="stylesheet" href="{{ url_for('static',filename='styles/admin-revised.css') }}" />
+</head>
+<body>
 
-<html>
-    <head>
-        <title>SuriBot Admin Dashboard</title>
-    </head>
+<div class="layout">
 
-    <body>
-        <h1>Admin Dashboard</h1>
+  <!-- ── Sidebar ──────────────────────────────────────────────── -->
+  <aside class="sidebar">
+    <div class="sidebar__brand">
+      <div class="brand-icon">✦</div>
+      <div>
+        <div class="brand-name">Suri Marketing</div>
+        <div class="brand-sub">Admin Dashboard</div>
+      </div>
+    </div>
 
-        <form id = 'upload_form' method="POST" enctype="multipart/form-data">
-            {{form.hidden_tag()}}
-            {{form.file()}}
-            <button type="submit">Upload</button>
+    <nav class="sidebar__nav">
+      <div class="nav-section-label">Overview</div>
+      <a class="nav-item" href="#"><span class="nav-icon">📊</span> Analytics</a>
+      <a class="nav-item" href="#"><span class="nav-icon">💬</span> Conversations <span class="nav-badge">12</span></a>
+      <a class="nav-item" href="#"><span class="nav-icon">📅</span> Bookings</a>
+
+      <div class="nav-section-label">Knowledge Base</div>
+      <a class="nav-item active" href="#"><span class="nav-icon">📚</span> Files &amp; Uploads</a>
+      <a class="nav-item" href="#"><span class="nav-icon">🔗</span> Sitemap Crawl</a>
+
+      <div class="nav-section-label">Settings</div>
+      <a class="nav-item" href="#"><span class="nav-icon">🤖</span> Bot Behaviour</a>
+      <a class="nav-item" href="#"><span class="nav-icon">🔐</span> Access &amp; Security</a>
+    </nav>
+
+    <div class="sidebar__footer">
+      <div class="user-row">
+        <div class="user-avatar">👤</div>
+        <div>
+          <div class="user-name">Admin</div>
+          <div class="user-role">Suri Marketing</div>
+        </div>
+      </div>
+    </div>
+  </aside>
+
+  <!-- ── Main ─────────────────────────────────────────────────── -->
+  <main class="main">
+
+    <div class="topbar">
+      <div class="topbar__title">Knowledge Base</div>
+      <div class="topbar__pill">
+        <span class="topbar__pill-dot"></span>
+        Chatbot Online
+      </div>
+    </div>
+
+    <div class="content">
+
+      <!-- Stat cards -->
+      <div class="stats-row">
+        <div class="stat-card stat-card--green">
+          <div class="stat-label">Documents in Knowledge Base</div>
+          <div class="stat-value" id="stat-doc-count">—</div>
+        </div>
+        <div class="stat-card stat-card--blue">
+          <div class="stat-label">KB Storage Used</div>
+          <div class="stat-value" id="stat-storage-used">—</div>
+          <div class="stat-sub">of 1 GB available</div>
+        </div>
+      </div>
+
+      <!-- KB section -->
+      <div class="kb-section">
+
+        <!-- Header -->
+        <div class="kb-header">
+          <div>
+            <div class="section-head">
+              <h2>Upload Documents</h2>
+              <span class="tag tag--purple">✦ RAG-Powered</span>
+            </div>
+            <p class="kb-desc">Files are automatically chunked, embedded, and added to the vector knowledge base. Supported: PDF, DOCX, TXT, MD, PNG, JPG.</p>
+          </div>
+          <button class="btn--primary" id="upload-btn">⬆ Upload Files</button>
+        </div>
+
+        <!-- Upload form -->
+        <form id="upload_form" method="POST" enctype="multipart/form-data">
+          {{ form.hidden_tag() }}
+
+          <!-- Drop zone -->
+          <div class="drop-zone" id="drop-zone">
+            <div class="drop-icon">📂</div>
+            <div class="drop-title">Drag &amp; drop files here</div>
+            <div class="drop-sub">
+              Files will be parsed and ingested into the knowledge base automatically.<br/>
+              Large files may take a few minutes to process.
+            </div>
+            <div class="drop-types">
+              <span class="file-type-pill">PDF</span>
+              <span class="file-type-pill">DOCX</span>
+              <span class="file-type-pill">TXT</span>
+              <span class="file-type-pill">MD</span>
+              <span class="file-type-pill">PNG</span>
+              <span class="file-type-pill">JPG</span>
+            </div>
+            {{ form.file(id="file-input") }}
+          </div>
         </form>
 
-        <button id="extract_btn">Extract Text</button>
-        <p id="status_field">None</p>
-        <div id="text_field"></div>
-    </body>
+        <!-- Upload queue -->
+        <div class="upload-queue" id="upload-queue">
+          <div class="queue-label">Processing Queue</div>
 
-    <script type="module" src="{{ url_for('static',filename='js/admin.js') }}"></script>
+        </div>
+
+        <!-- Status / Extract -->
+        <div class="extract-row">
+          <button id="extract_btn" class="btn--primary">Extract Text</button>
+          <button id="add_to_kb_btn" class="btn--primary" style="display:none;">＋ Add to Knowledge Base</button>
+          <p id="status_field" class="status-text"></p>
+        </div>
+        <div id="text_field" class="text-output"></div>
+
+        <div class="section-divider"></div>
+
+        <!-- Files table -->
+        <div class="kb-table-wrap">
+          <div class="kb-table-head">
+            <div class="section-head">
+              <h2 style="font-size:15px;">Knowledge Base Files</h2>
+              <span class="tag tag--green" id="doc-count-tag">0 Active</span>
+              <button id="refresh_docs_btn" class="btn--primary" style="margin-left:auto;">↻ Refresh</button>
+            </div>
+          </div>
+
+          <table>
+            <thead>
+              <tr>
+                <th>File Name</th>
+                <th>Type</th>
+                <th>Size</th>
+                <th>Uploaded</th>
+                <th>Status</th>
+              </tr>
+            </thead>
+            <tbody id="docs-tbody"></tbody>
+          </table>
+        </div>
+
+      </div><!-- /kb-section -->
+    </div><!-- /content -->
+  </main>
+
+</div><!-- /layout -->
+<script type="module" src="{{ url_for('static', filename='js/admin-revised.js') }}"></script>   
+</body>
 </html>

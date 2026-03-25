@@ -163,6 +163,42 @@ class ExtractedDocumentTextAPI(Resource):
 api.add_resource(ExtractedDocumentTextAPI, "/document/<string:doc_id>/text")
 
 
+# REST API to get all documents
+@app.route("/documents", methods=["GET"])
+def get_documents():
+    try:
+        rows = db.get_all_documents()
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+    documents = [
+        {
+            "doc_id":        row[0],
+            "source_type":   row[1],
+            "file_name":     row[2],
+            "file_size":     row[3],
+            "file_type":     row[4],
+            "uploaded_date": str(row[5]),
+            "status":        row[8],
+            "in_kb":         row[12],
+        }
+        for row in rows
+    ]
+
+    return jsonify({"documents": documents}), 200
+
+
+# REST API to mark a document as added to the knowledge base
+@app.route("/document/<string:doc_id>/add-to-kb", methods=["POST"])
+def add_to_kb(doc_id):
+    try:
+        db.set_in_kb(doc_id)
+    except Exception as e:
+        return jsonify({"status": "error", "message": str(e)}), 500
+
+    return jsonify({"status": "ok"}), 200
+
+
 # Admin Dashboard
 class UploadFileForm(FlaskForm):
     file = FileField("File")
@@ -174,7 +210,7 @@ def admin():
     form = UploadFileForm()
 
     if request.method == "GET":
-        return render_template("admin.html", form=form)
+        return render_template("admin-revised.html", form=form)
 
     if form.validate_on_submit():
         file = form.file.data  # get the uploaded file data sent from frontend
