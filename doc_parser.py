@@ -1,7 +1,7 @@
 from pdf2image import convert_from_path
 import os
 import datetime
-from exceptions import ExtractionTimeOut
+from custom_exceptions import ExtractionTimeOut
 from docx import Document
 
 OCR_PROMPT = """

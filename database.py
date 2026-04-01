@@ -2,7 +2,7 @@ import psycopg2 as pg2
 from psycopg2.pool import ThreadedConnectionPool
 import uuid
 from enums import DocumentStatus
-import exceptions as ex
+import custom_exceptions as ex
 
 
 class Database:

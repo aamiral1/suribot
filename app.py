@@ -7,11 +7,13 @@ from openai import OpenAI
 from werkzeug.utils import secure_filename
 from database import Database
 from doc_parser import extract_doc_info
+from chunker import chunk_text
+from embedder import embed_chunks
 from enums import DocumentStatus, SourceType, AllowedFileTypes
 import boto3
 import botocore
 import threading
-import exceptions as ex
+import custom_exceptions as ex
 import datetime
 import os
 import tempfile
@@ -196,7 +198,40 @@ def add_to_kb(doc_id):
     except Exception as e:
         return jsonify({"status": "error", "message": str(e)}), 500
 
+    threading.Thread(target=_chunk_and_embed_job, args=(doc_id,)).start()
+
     return jsonify({"status": "ok"}), 200
+
+
+def _chunk_and_embed_job(doc_id):
+    print(f"\n[KB] Starting chunk + embed job for doc: {doc_id}")
+    try:
+        # fetch extracted text from S3
+        s3_bucket, s3_key = db.get_extracted_text_file_path(doc_id)
+        text = _get_file_text(s3, s3_bucket, s3_key)
+
+        # chunk
+        print(f"[KB] Chunking text ({len(text)} chars)...")
+        chunks = chunk_text(text, api_key=os.getenv("OPENAI_API_KEY"))
+        print(f"[KB] Produced {len(chunks)} chunks.")
+
+        # embed + print each chunk
+        embed_chunks(client, chunks)
+
+        # save chunks (text only) to S3 as JSON
+        import json
+        chunks_json = json.dumps([{"chunk_index": i, "text": c} for i, c in enumerate(chunks)])
+        chunks_key = secure_filename(f"{doc_id}_chunks.json")
+        s3.meta.client.put_object(
+            Bucket=os.getenv("AWS_S3_BUCKET"),
+            Key=chunks_key,
+            Body=chunks_json.encode("utf-8"),
+            ContentType="application/json",
+        )
+        print(f"[KB] Chunks saved to S3: {chunks_key}")
+
+    except Exception as e:
+        print(f"[KB] Error during chunk + embed job: {e}")
 
 
 # Admin Dashboard
@@ -210,7 +245,7 @@ def admin():
     form = UploadFileForm()
 
     if request.method == "GET":
-        return render_template("admin-revised.html", form=form)
+        return render_template("admin.html", form=form)
 
     if form.validate_on_submit():
         file = form.file.data  # get the uploaded file data sent from frontend

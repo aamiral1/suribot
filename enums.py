@@ -1,5 +1,5 @@
 from enum import Enum
-import exceptions as ex
+import custom_exceptions as ex
 
 
 class DocumentStatus(Enum):
