@@ -77,6 +77,8 @@ pdf2image==1.17.0
 pillow==12.1.1
 propcache==0.4.1
 protobuf==6.33.6
+pinecone==6.0.0
+pinecone-text
 psycopg2==2.9.11
 pybase64==1.4.3
 pydantic==2.12.5

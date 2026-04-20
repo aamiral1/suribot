@@ -91,6 +91,21 @@
         <form id="upload_form" method="POST" enctype="multipart/form-data">
           {{ form.hidden_tag() }}
 
+          <!-- Document type + structure selectors -->
+          <div class="doc-type-row">
+            <label for="doc-type-select">Document Type</label>
+            <select id="doc-type-select" name="doc_type">
+              <option value="knowledge_base">Knowledge Base</option>
+              <option value="system_prompt">System Prompt</option>
+            </select>
+
+            <label for="doc-structure-select">Document Structure</label>
+            <select id="doc-structure-select" name="doc_structure">
+              <option value="free_flow">Free Flow</option>
+              <option value="structured">Structured</option>
+            </select>
+          </div>
+
           <!-- Drop zone -->
           <div class="drop-zone" id="drop-zone">
             <div class="drop-icon">📂</div>
@@ -152,10 +167,78 @@
         </div>
 
       </div><!-- /kb-section -->
+
+      <!-- Retrieval Settings -->
+      <div class="kb-section" style="margin-top: 24px;">
+        <div class="kb-header">
+          <div>
+            <div class="section-head">
+              <h2>Retrieval Settings</h2>
+              <span class="tag tag--purple">✦ Hybrid Search</span>
+            </div>
+            <p class="kb-desc">Control the balance between semantic (meaning-based) and keyword search when retrieving documents from the knowledge base.</p>
+          </div>
+        </div>
+
+        <div class="alpha-slider-row">
+          <label for="alpha-slider">Retrieval Balance</label>
+          <div class="slider-labels">
+            <span>Semantic</span>
+            <span>Keyword</span>
+          </div>
+          <input type="range" id="alpha-slider" min="0" max="1" step="0.1" value="0.5" />
+          <div class="slider-value-row">
+            <span class="slider-value-label">Current value: <strong id="alpha-value">0.5</strong></span>
+            <span id="alpha-save-status" class="status-text"></span>
+          </div>
+        </div>
+      </div><!-- /retrieval-settings -->
+
     </div><!-- /content -->
   </main>
 
 </div><!-- /layout -->
-<script type="module" src="{{ url_for('static', filename='js/admin.js') }}"></script>   
+<script type="module" src="{{ url_for('static', filename='js/admin.js') }}"></script>
+<script>
+  const slider = document.getElementById('alpha-slider');
+  const alphaDisplay = document.getElementById('alpha-value');
+  const alphaStatus = document.getElementById('alpha-save-status');
+
+  slider.addEventListener('input', () => {
+    alphaDisplay.textContent = slider.value;
+  });
+
+  slider.addEventListener('change', async () => {
+    const alpha = parseFloat(slider.value);
+    alphaDisplay.textContent = alpha;
+    alphaStatus.textContent = 'Saving...';
+    try {
+      const res = await fetch('/config/alpha', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ alpha }),
+      });
+      if (res.ok) {
+        alphaStatus.textContent = 'Saved';
+        setTimeout(() => { alphaStatus.textContent = ''; }, 2000);
+      } else {
+        alphaStatus.textContent = 'Error saving';
+      }
+    } catch {
+      alphaStatus.textContent = 'Error saving';
+    }
+  });
+
+  // Hide Document Structure dropdown when System Prompt is selected
+  const docTypeSelect = document.getElementById('doc-type-select');
+  const docStructureLabel = document.querySelector('label[for="doc-structure-select"]');
+  const docStructureSelect = document.getElementById('doc-structure-select');
+
+  docTypeSelect.addEventListener('change', () => {
+    const isSystemPrompt = docTypeSelect.value === 'system_prompt';
+    docStructureLabel.style.display = isSystemPrompt ? 'none' : '';
+    docStructureSelect.style.display = isSystemPrompt ? 'none' : '';
+  });
+</script>
 </body>
 </html>

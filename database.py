@@ -50,14 +50,26 @@ class Database:
                     WHEN duplicate_object THEN null; 
                 END $$;
 
-                DO $$ 
-                BEGIN 
+                DO $$
+                BEGIN
                     CREATE TYPE source_format AS ENUM(
                         'upload',
                         'crawl'
                     );
-                EXCEPTION 
-                    WHEN duplicate_object THEN null; 
+                EXCEPTION
+                    WHEN duplicate_object THEN null;
+                END $$;
+
+                DO $$
+                BEGIN
+                    CREATE TYPE kb_status_type AS ENUM(
+                        'none',
+                        'processing',
+                        'success',
+                        'failed'
+                    );
+                EXCEPTION
+                    WHEN duplicate_object THEN null;
                 END $$;
 
                 CREATE TABLE IF NOT EXISTS {self.doc_table} (
@@ -77,6 +89,22 @@ class Database:
                 );
 
                 ALTER TABLE {self.doc_table} ADD COLUMN IF NOT EXISTS in_kb BOOLEAN DEFAULT FALSE;
+                ALTER TABLE {self.doc_table} ADD COLUMN IF NOT EXISTS kb_status kb_status_type NOT NULL DEFAULT 'none';
+                ALTER TABLE {self.doc_table} ADD COLUMN IF NOT EXISTS doc_type TEXT NOT NULL DEFAULT 'knowledge_base';
+                ALTER TABLE {self.doc_table} ADD COLUMN IF NOT EXISTS doc_structure TEXT NOT NULL DEFAULT 'free_flow';
+
+                CREATE TABLE IF NOT EXISTS document_chunks (
+                    id       SERIAL PRIMARY KEY,
+                    doc_id   TEXT NOT NULL,
+                    chunk_id INTEGER NOT NULL,
+                    text     TEXT NOT NULL,
+                    heading  TEXT
+                );
+
+                CREATE INDEX IF NOT EXISTS idx_doc_chunks_doc_id
+                    ON document_chunks(doc_id);
+                CREATE INDEX IF NOT EXISTS idx_doc_chunks_chunk
+                    ON document_chunks(doc_id, chunk_id);
             """
 
             cursor.execute(create_table_command)
@@ -91,29 +119,36 @@ class Database:
             self._put_conn(connection)
 
 # creates record for a document with CREATED as initial value
-    def create(self, source_type, name, size, type, upload_date, s3_file_bucket, s3_file_key, s3_extracted_text_bucket, s3_extracted_text_key):
+    def create(self, source_type, name, size, type, upload_date, s3_file_bucket, s3_file_key, s3_extracted_text_bucket, s3_extracted_text_key, doc_type="knowledge_base", doc_structure="free_flow"):
         connection = self._get_conn()
         cursor = connection.cursor()
 
         doc_id = str(uuid.uuid4())
 
-        command = f"""INSERT INTO {self.doc_table} VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)"""
+        command = f"""INSERT INTO {self.doc_table}
+            (doc_id, source_type, file_name, file_size, file_type, uploaded_date,
+             s3_file_bucket, s3_file_key, status, s3_extracted_text_bucket,
+             s3_extracted_text_key, error_msg, doc_type, doc_structure)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)"""
 
         try:
             cursor.execute(
                 command,
                 (
-                    doc_id, 
-                    source_type, 
-                    name, size, 
-                    type, 
-                    upload_date, 
-                    s3_file_bucket, 
-                    s3_file_key, 
-                    DocumentStatus.CREATED.value, 
-                    s3_extracted_text_bucket, 
-                    s3_extracted_text_key, 
-                    None),
+                    doc_id,
+                    source_type,
+                    name, size,
+                    type,
+                    upload_date,
+                    s3_file_bucket,
+                    s3_file_key,
+                    DocumentStatus.CREATED.value,
+                    s3_extracted_text_bucket,
+                    s3_extracted_text_key,
+                    None,
+                    doc_type,
+                    doc_structure,
+                ),
             )
             connection.commit()
         except pg2.IntegrityError:
@@ -311,9 +346,163 @@ class Database:
             cursor.close()
             self._put_conn(connection)
 
+    # retrieves kb_status for a given doc id
+    def get_kb_status(self, doc_id):
+        connection = self._get_conn()
+        cursor = connection.cursor()
+
+        command = f"SELECT kb_status FROM {self.doc_table} WHERE doc_id = %s"
+
+        try:
+            cursor.execute(command, (doc_id,))
+            row = cursor.fetchone()
+
+            if not row:
+                raise ex.InvalidDocumentID("No document available")
+
+            return row[0]
+        except Exception as e:
+            connection.rollback()
+            raise Exception(f"Error: {e}")
+        finally:
+            cursor.close()
+            self._put_conn(connection)
+
+    # sets kb_status for a given doc id
+    def set_kb_status(self, doc_id, status: str):
+        connection = self._get_conn()
+        cursor = connection.cursor()
+
+        command = f"UPDATE {self.doc_table} SET kb_status = %s WHERE doc_id = %s"
+
+        try:
+            cursor.execute(command, (status, doc_id))
+            connection.commit()
+        except Exception as e:
+            connection.rollback()
+            raise Exception(f"Error: {e}")
+        finally:
+            cursor.close()
+            self._put_conn(connection)
+
+    # returns doc_type for a given doc_id
+    def get_doc_type(self, doc_id):
+        connection = self._get_conn()
+        cursor = connection.cursor()
+
+        command = f"SELECT doc_type FROM {self.doc_table} WHERE doc_id = %s"
+
+        try:
+            cursor.execute(command, (doc_id,))
+            row = cursor.fetchone()
+            if not row:
+                raise ex.InvalidDocumentID("No document available")
+            return row[0]
+        except Exception as e:
+            connection.rollback()
+            raise Exception(f"Error: {e}")
+        finally:
+            cursor.close()
+            self._put_conn(connection)
+
+    # returns (s3_extracted_text_bucket, s3_extracted_text_key) for all system prompt docs in KB
+    def get_system_prompt_docs(self):
+        connection = self._get_conn()
+        cursor = connection.cursor()
+
+        command = f"""SELECT s3_extracted_text_bucket, s3_extracted_text_key
+                      FROM {self.doc_table}
+                      WHERE doc_type = 'system_prompt' AND in_kb = TRUE"""
+
+        try:
+            cursor.execute(command)
+            return cursor.fetchall()
+        except Exception as e:
+            connection.rollback()
+            raise Exception(f"Error: {e}")
+        finally:
+            cursor.close()
+            self._put_conn(connection)
+
+    # returns doc_structure ('free_flow' or 'structured') for a given doc_id
+    def get_doc_structure(self, doc_id):
+        connection = self._get_conn()
+        cursor = connection.cursor()
+
+        command = f"SELECT doc_structure FROM {self.doc_table} WHERE doc_id = %s"
+
+        try:
+            cursor.execute(command, (doc_id,))
+            row = cursor.fetchone()
+            if not row:
+                raise ex.InvalidDocumentID("No document available")
+            return row[0]
+        except Exception as e:
+            connection.rollback()
+            raise Exception(f"Error: {e}")
+        finally:
+            cursor.close()
+            self._put_conn(connection)
+
+    # bulk inserts chunk rows into document_chunks
+    def insert_chunks(self, doc_id, rows):
+        connection = self._get_conn()
+        cursor = connection.cursor()
+
+        command = """INSERT INTO document_chunks
+            (doc_id, chunk_id, text, heading)
+            VALUES (%s, %s, %s, %s)"""
+
+        try:
+            cursor.executemany(
+                command,
+                [
+                    (
+                        doc_id,
+                        row["chunk_id"],
+                        row["text"],
+                        row.get("heading"),
+                    )
+                    for row in rows
+                ],
+            )
+            connection.commit()
+        except Exception as e:
+            connection.rollback()
+            raise Exception(f"Error: {e}")
+        finally:
+            cursor.close()
+            self._put_conn(connection)
+
+    # returns all chunks across all documents (used to rebuild BM25 encoder)
+    def get_all_chunks(self):
+        connection = self._get_conn()
+        cursor = connection.cursor()
+
+        command = """SELECT doc_id, chunk_id, text FROM document_chunks"""
+
+        try:
+            cursor.execute(command)
+            rows = cursor.fetchall()
+            return [
+                {
+                    "doc_id": row[0],
+                    "chunk_id": row[1],
+                    "text": row[2],
+                }
+                for row in rows
+            ]
+        except Exception as e:
+            connection.rollback()
+            raise Exception(f"Error: {e}")
+        finally:
+            cursor.close()
+            self._put_conn(connection)
+            
+
     # private helper functions
     def _get_conn(self):
         return self.pool.getconn()
-    
+
     def _put_conn(self, conn):
         self.pool.putconn(conn)

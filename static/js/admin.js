@@ -176,39 +176,50 @@ function startPolling(docId) {
   if (interval) clearInterval(interval);
 
   interval = setInterval(async () => {
-    const data = await fetchDocStatus(docId);
+    try {
+      const data = await fetchDocStatus(docId);
 
-    if (!data) {
-      statusField.textContent = 'error';
-      updateQueueBadge(docId, 'failed');
-      clearInterval(interval);
-      return;
-    }
-
-    const status = data.status;
-    statusField.textContent = status;
-    updateQueueBadge(docId, status);
-
-    if (status === 'failed' || status === 'error') {
-      clearInterval(interval);
-      return;
-    }
-
-    if (status === 'processing' || status === 'created') {
-      return;
-    }
-
-    if (status === 'success' && data.has_text === true) {
-      clearInterval(interval);
-
-      const textData = await fetchExtractedText(docId);
-      if (!textData) {
+      if (!data) {
         statusField.textContent = 'error';
+        updateQueueBadge(docId, 'failed');
+        clearInterval(interval);
         return;
       }
 
-      textField.textContent = textData.text || '';
-      addToKbBtn.style.display = 'inline-flex';
+      const status = data.status;
+      statusField.textContent = status;
+      updateQueueBadge(docId, status);
+
+      if (status === 'failed' || status === 'error') {
+        clearInterval(interval);
+        return;
+      }
+
+      if (status === 'processing' || status === 'created') {
+        return;
+      }
+
+      if (status === 'success') {
+        clearInterval(interval);
+
+        if (!data.has_text) {
+          statusField.textContent = 'error (file not found in storage)';
+          return;
+        }
+
+        const textData = await fetchExtractedText(docId);
+        if (!textData || textData.text == null) {
+          statusField.textContent = 'error (could not load text)';
+          return;
+        }
+
+        textField.textContent = textData.text;
+        addToKbBtn.style.display = 'inline-flex';
+      }
+    } catch (err) {
+      console.error('[polling] error:', err);
+      statusField.textContent = 'error';
+      clearInterval(interval);
     }
   }, 2000);
 }
@@ -307,11 +318,30 @@ addToKbBtn.addEventListener('click', async () => {
       return;
     }
 
-    // TODO: chunk → vectorise → update vector DB
+    addToKbBtn.disabled    = true;
+    addToKbBtn.textContent = 'Processing...';
 
-    addToKbBtn.disabled     = true;
-    addToKbBtn.textContent  = '✓ Added to Knowledge Base';
-    loadDocumentsTable();
+    const kbPollInterval = setInterval(async () => {
+      try {
+        const statusRes  = await fetch(`/document/${latestDocId}/kb-status`);
+        const statusData = await statusRes.json();
+        const kbStatus   = statusData.kb_status;
+
+        if (kbStatus === 'processing') {
+          addToKbBtn.textContent = 'Processing...';
+        } else if (kbStatus === 'success') {
+          clearInterval(kbPollInterval);
+          addToKbBtn.textContent = '✓ Added to Knowledge Base';
+          loadDocumentsTable();
+        } else if (kbStatus === 'failed') {
+          clearInterval(kbPollInterval);
+          addToKbBtn.disabled    = false;
+          addToKbBtn.textContent = '✗ Failed — Retry';
+        }
+      } catch (pollErr) {
+        console.error('KB status poll error:', pollErr);
+      }
+    }, 1000);
 
   } catch (err) {
     console.error(err);
@@ -321,6 +351,10 @@ addToKbBtn.addEventListener('click', async () => {
 
 // ── Extract button ────────────────────────────────────────────
 extractBtn.addEventListener('click', async () => {
+  if (!latestDocId) {
+    statusField.textContent = 'upload a file first';
+    return;
+  }
   try {
     console.log('Extracting doc:', latestDocId);
 
