@@ -12,15 +12,15 @@ def get_encoder() -> BM25Encoder | None:
     return _encoder
 
 
-def fit_and_save(child_texts: list[str], s3_client, bucket: str) -> BM25Encoder:
+def fit_and_save(chunk_texts: list[str], s3_client, bucket: str) -> BM25Encoder:
     """
-    Fit a BM25Encoder on the given child texts and save params to S3.
+    Fit a BM25Encoder on the given chunks and save params to S3.
     Returns the fitted encoder.
     """
     global _encoder
 
     encoder = BM25Encoder()
-    encoder.fit(child_texts)
+    encoder.fit(chunk_texts)
 
     # Serialise params to JSON and upload to S3
     params = encoder.get_params()
@@ -31,7 +31,7 @@ def fit_and_save(child_texts: list[str], s3_client, bucket: str) -> BM25Encoder:
         Body=params_json,
         ContentType="application/json",
     )
-    print(f"[bm25_encoder] Fitted on {len(child_texts)} texts and saved to S3: {BM25_S3_KEY}")
+    print(f"[bm25_encoder] Fitted on {len(chunk_texts)} chunks and saved to S3: {BM25_S3_KEY}")
 
     _encoder = encoder
     return encoder

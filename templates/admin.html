@@ -99,11 +99,6 @@
               <option value="system_prompt">System Prompt</option>
             </select>
 
-            <label for="doc-structure-select">Document Structure</label>
-            <select id="doc-structure-select" name="doc_structure">
-              <option value="free_flow">Free Flow</option>
-              <option value="structured">Structured</option>
-            </select>
           </div>
 
           <!-- Drop zone -->
@@ -229,16 +224,6 @@
     }
   });
 
-  // Hide Document Structure dropdown when System Prompt is selected
-  const docTypeSelect = document.getElementById('doc-type-select');
-  const docStructureLabel = document.querySelector('label[for="doc-structure-select"]');
-  const docStructureSelect = document.getElementById('doc-structure-select');
-
-  docTypeSelect.addEventListener('change', () => {
-    const isSystemPrompt = docTypeSelect.value === 'system_prompt';
-    docStructureLabel.style.display = isSystemPrompt ? 'none' : '';
-    docStructureSelect.style.display = isSystemPrompt ? 'none' : '';
-  });
 </script>
 </body>
 </html>

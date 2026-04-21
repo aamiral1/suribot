@@ -384,22 +384,20 @@ def extract_from_md_structured(file_path):
     return extract_from_text_file_structured(file_path)
 
 
-def extract_doc_info(client, file_path, structured=False):
+def extract_doc_info(client, file_path):
     ext = os.path.splitext(file_path)[1].lower()
     print("file type: ", ext)
 
     if ext == ".pdf":
         images_dir = os.path.join(os.path.dirname(file_path), "extracted_images")
-        prompt = STRUCTURED_OCR_PROMPT if structured else None
-        return extract_from_pdf(client, file_path, images_dir, ocr_prompt=prompt)
+        return extract_from_pdf(client, file_path, images_dir, ocr_prompt=STRUCTURED_OCR_PROMPT)
     elif ext in (".png", ".jpg", ".jpeg"):
-        prompt = STRUCTURED_OCR_PROMPT if structured else None
-        return extract_from_image(client, file_path, ocr_prompt=prompt)
+        return extract_from_image(client, file_path, ocr_prompt=STRUCTURED_OCR_PROMPT)
     elif ext == ".docx":
-        return extract_from_docx_structured(file_path) if structured else extract_from_docx(file_path)
+        return extract_from_docx_structured(file_path)
     elif ext == ".txt":
-        return extract_from_text_file_structured(file_path) if structured else extract_from_text_file(file_path)
+        return extract_from_text_file_structured(file_path)
     elif ext == ".md":
-        return extract_from_md_structured(file_path) if structured else extract_from_md(file_path)
+        return extract_from_md_structured(file_path)
     else:
         raise ValueError(f"Unsupported file type: {ext}")

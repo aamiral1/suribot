@@ -4,7 +4,7 @@ from crawl4ai import *
 async def main():
     async with AsyncWebCrawler() as crawler:
         result = await crawler.arun(
-            url="https://surimarketing.co.uk/",
+            url="https://surimarketing.co.uk/paid-ads-campaigns/",
         )
         print(result.markdown)
 

@@ -1,18 +1,22 @@
+from chunking_evaluation.utils import openai_token_count
+from chunker import chunk_text
+
 HEADING_PREFIX = "[HEADING]"
-MIN_PARENT_WORDS = 10
+MIN_SECTION_WORDS = 10
 MERGE_WARNING_THRESHOLD = 0.5
+MAX_SECTION_TOKENS = 400
 
 
-def split_into_parents(text: str) -> list[dict]:
+def split_into_sections(text: str) -> list[dict]:
     """
-    Split heading-marked text into parent chunks.
+    Split heading-marked text into flat sections.
 
-    Each line beginning with '[HEADING]' starts a new parent section.
+    Each line beginning with '[HEADING]' starts a new section.
     Any content before the first heading becomes chunk_id=0 with heading="".
 
     Short-section guardrail:
-      - Sections with body text < MIN_PARENT_WORDS words are merged into the
-        next parent if one exists; otherwise left as-is.
+      - Sections with body text < MIN_SECTION_WORDS words are merged into the
+        next section if one exists; otherwise left as-is.
       - If >= 50% of sections required merging, a warning is logged.
     """
     lines = text.splitlines()
@@ -56,7 +60,7 @@ def split_into_parents(text: str) -> list[dict]:
         section = raw_sections[i]
         word_count = len(section["body"].split())
 
-        if word_count < MIN_PARENT_WORDS and i + 1 < len(raw_sections):
+        if word_count < MIN_SECTION_WORDS and i + 1 < len(raw_sections):
             # Merge into next section
             next_section = raw_sections[i + 1]
             combined_body = (section["body"] + "\n\n" + next_section["body"]).strip()
@@ -78,9 +82,9 @@ def split_into_parents(text: str) -> list[dict]:
         )
 
     # Assign chunk_ids
-    parents = []
+    sections = []
     for idx, section in enumerate(merged):
-        parents.append({
+        sections.append({
             "chunk_id": idx,
             "heading": section["heading"],
             "text": (
@@ -90,4 +94,36 @@ def split_into_parents(text: str) -> list[dict]:
             ).strip(),
         })
 
-    return parents
+    return sections
+
+
+def chunk_sections_with_fallback(text: str, api_key: str) -> list[str]:
+    """
+    Adaptive chunking for the section_and_semantic strategy:
+      1. Split at [HEADING] markers into sections.
+      2. If no sections found, fall back to semantic chunking on the full text.
+      3. For each section, if it exceeds MAX_SECTION_TOKENS, break it down
+         further with semantic chunking; otherwise keep it as-is.
+    Returns a flat list[str] of final chunks.
+    """
+    sections = split_into_sections(text)
+
+    if not sections:
+        print("[structured_chunker] No headings found — falling back to semantic chunking on full text.")
+        return chunk_text(text, api_key=api_key)
+
+    final_chunks = []
+    for section in sections:
+        token_count = openai_token_count(section["text"])
+        if token_count > MAX_SECTION_TOKENS:
+            print(
+                f"[structured_chunker] Section '{section['heading'] or '(no heading)'}' "
+                f"is {token_count} tokens (>{MAX_SECTION_TOKENS}) — applying semantic chunking."
+            )
+            sub_chunks = chunk_text(section["text"], api_key=api_key)
+            final_chunks.extend(sub_chunks)
+        else:
+            final_chunks.append(section["text"])
+
+    print(f"[structured_chunker] Produced {len(final_chunks)} final chunks from {len(sections)} sections.")
+    return final_chunks

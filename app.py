@@ -7,10 +7,11 @@ from openai import OpenAI
 from werkzeug.utils import secure_filename
 from database import Database
 from doc_parser import extract_doc_info
-from chunker import chunk_text
+from chunker import chunk_text, chunk_text_recursive, chunk_text_fixed
+from config import ChunkingStrategy, get_chunking_strategy
 from embedder import embed_chunks
 from pinecone_store import get_or_create_index, upsert_chunks, hybrid_query, query_index
-from structured_chunker import split_into_parents
+from structured_chunker import split_into_sections, chunk_sections_with_fallback
 from hybrid_retriever import hybrid_retrieve
 import bm25_encoder as bm25_enc
 from enums import DocumentStatus, SourceType, AllowedFileTypes
@@ -388,12 +389,9 @@ def get_documents():
 @app.route("/document/<string:doc_id>/add-to-kb", methods=["POST"])
 def add_to_kb(doc_id):
     doc_type = db.get_doc_type(doc_id)
-    doc_structure = db.get_doc_structure(doc_id)
     db.set_kb_status(doc_id, "processing")
     if doc_type == "system_prompt":
         threading.Thread(target=_system_prompt_job, args=(doc_id,)).start()
-    elif doc_structure == "structured":
-        threading.Thread(target=_structured_chunk_and_embed_job, args=(doc_id,)).start()
     else:
         threading.Thread(target=_chunk_and_embed_job, args=(doc_id,)).start()
     return jsonify({"status": "processing"}), 200
@@ -442,15 +440,23 @@ def _system_prompt_job(doc_id):
 
 
 def _chunk_and_embed_job(doc_id):
-    print(f"\n[KB] Starting free-flow chunk + embed job for doc: {doc_id}")
+    strategy = get_chunking_strategy()
+    print(f"\n[KB] Starting chunk + embed job for doc: {doc_id} (strategy: {strategy.value})")
     try:
         # fetch extracted text from S3
         s3_bucket, s3_key = db.get_extracted_text_file_path(doc_id)
         text = _get_file_text(s3, s3_bucket, s3_key)
 
-        # chunk
+        # chunk using selected strategy
         print(f"[KB] Chunking text ({len(text)} chars)...")
-        chunks = chunk_text(text, api_key=os.getenv("OPENAI_API_KEY"))
+        if strategy == ChunkingStrategy.SECTION_AND_SEMANTIC:
+            chunks = chunk_sections_with_fallback(text, api_key=os.getenv("OPENAI_API_KEY"))
+        elif strategy == ChunkingStrategy.RECURSIVE_TOKEN:
+            chunks = chunk_text_recursive(text)
+        elif strategy == ChunkingStrategy.FIXED_SIZE:
+            chunks = chunk_text_fixed(text)
+        else:  # SEMANTIC_ONLY
+            chunks = chunk_text(text, api_key=os.getenv("OPENAI_API_KEY"))
         print(f"[KB] Produced {len(chunks)} chunks.")
 
         # embed (dense)
@@ -512,85 +518,6 @@ def _chunk_and_embed_job(doc_id):
 
     except Exception as e:
         print(f"[KB] Error during chunk + embed job: {e}")
-        db.set_kb_status(doc_id, "failed")
-
-
-def _structured_chunk_and_embed_job(doc_id):
-    print(f"\n[KB] Starting structured chunk + embed job for doc: {doc_id}")
-    try:
-        # fetch extracted text (contains [HEADING] markers) from S3
-        s3_bucket, s3_key = db.get_extracted_text_file_path(doc_id)
-        text = _get_file_text(s3, s3_bucket, s3_key)
-
-        # split into sections by heading boundaries
-        print(f"[KB] Splitting into sections ({len(text)} chars)...")
-        parents = split_into_parents(text)
-        print(f"[KB] Produced {len(parents)} sections.")
-
-        if not parents:
-            print(f"[KB] No sections produced for doc {doc_id}. Marking as failed.")
-            db.set_kb_status(doc_id, "failed")
-            return
-
-        # each section is a flat chunk
-        chunk_rows = [
-            {
-                "chunk_id": p["chunk_id"],
-                "text": p["text"],
-                "heading": p["heading"],
-            }
-            for p in parents
-        ]
-
-        # embed section texts (dense)
-        section_texts = [p["text"] for p in parents]
-        embedded = embed_chunks(client, section_texts)
-
-        # encode sparse vectors
-        encoder = bm25_enc.get_encoder()
-        if encoder is not None:
-            sparse_vectors = bm25_enc.encode_documents(encoder, section_texts)
-        else:
-            encoder = bm25_enc.fit_and_save(section_texts, s3, bucket_name)
-            sparse_vectors = bm25_enc.encode_documents(encoder, section_texts)
-
-        # build format expected by upsert_chunks
-        chunks_for_upsert = [
-            {
-                "chunk_id": chunk_rows[i]["chunk_id"],
-                "text": chunk_rows[i]["text"],
-                "embedding": embedded[i]["embedding"],
-            }
-            for i in range(len(chunk_rows))
-        ]
-
-        # upsert to Pinecone with dense + sparse vectors
-        print(f"[KB] Upserting {len(chunks_for_upsert)} hybrid vectors to Pinecone...")
-        pinecone_index = get_or_create_index(
-            api_key=os.getenv("PINECONE_API_KEY"),
-            index_name=os.getenv("PINECONE_INDEX_NAME"),
-        )
-        upsert_chunks(pinecone_index, doc_id, chunks_for_upsert, sparse_vectors)
-
-        # persist rows to document_chunks table
-        db.insert_chunks(doc_id, chunk_rows)
-        print(f"[KB] Inserted {len(chunk_rows)} rows into document_chunks.")
-
-        # refit and save BM25 encoder with updated corpus
-        all_chunks = db.get_all_chunks()
-        bm25_enc.fit_and_save(
-            [c["text"] for c in all_chunks],
-            s3,
-            bucket_name,
-        )
-
-        # mark document as in KB
-        db.set_in_kb(doc_id)
-        db.set_kb_status(doc_id, "success")
-        print(f"[KB] Document {doc_id} marked as in_kb=TRUE in database.")
-
-    except Exception as e:
-        print(f"[KB] Error during structured chunk + embed job: {e}")
         db.set_kb_status(doc_id, "failed")
 
 
@@ -699,7 +626,6 @@ def admin():
 
         # Register file entry in database
         doc_type = request.form.get("doc_type", "knowledge_base")
-        doc_structure = request.form.get("doc_structure", "free_flow")
         doc_id = db.create(
             source_type=SourceType.UPLOAD.value,
             name=file_name,
@@ -711,7 +637,7 @@ def admin():
             s3_extracted_text_bucket="na",
             s3_extracted_text_key="na",
             doc_type=doc_type,
-            doc_structure=doc_structure,
+            doc_structure="structured",
         )
 
         msg = {
@@ -736,7 +662,7 @@ def extract_text():
     # wrapper function to thread extraction: Replace with Celery later
 
     # AWS S3 - CONTINUE FROM HERE!
-    def extraction_job(doc_id, file_path, structured=False):
+    def extraction_job(doc_id, file_path):
         file_name = doc_id + ".txt"
         isSuccess = False
 
@@ -744,7 +670,6 @@ def extract_text():
             extracted_text = extract_doc_info(
                 client=client,
                 file_path=file_path,
-                structured=structured,
             )
 
             # upload extracted text as file to S3 bucket
@@ -821,14 +746,11 @@ def extract_text():
 
             # extract file path from doc_id based on DB
             s3_bucket, s3_key = db.get_file_path(doc_id)
-            doc_structure = db.get_doc_structure(doc_id)
-
             local_file_path = _download_s3_file_to_temp(s3, s3_bucket, s3_key)
 
-            # successfully extraction starts - replace with Celery
             threading.Thread(
-                target=extraction_job, args=(doc_id, local_file_path, doc_structure == "structured")
-            ).start()  # begin extraction job on thread
+                target=extraction_job, args=(doc_id, local_file_path)
+            ).start()
 
         except ex.InvalidDocumentStatusTransition as e:
             msg = {
