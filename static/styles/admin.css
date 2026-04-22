@@ -462,3 +462,178 @@
     }
 
     .text-output:empty { display: none; }
+
+    
+    :root {
+          --font-mono: ui-monospace, 'SF Mono', 'JetBrains Mono', 'Cascadia Code', Menlo, Consolas, monospace;
+        }
+    
+    /* URL input row */
+    .url-input-row {
+      display: flex;
+      gap: 10px;
+      align-items: stretch;
+      margin: 20px 24px 8px;
+    }
+
+    .url-input {
+      flex: 1;
+      background: var(--c-surface2);
+      border: 1px solid var(--c-border2);
+      border-radius: 12px;
+      padding: 14px 16px;
+      font-family: var(--font-mono);
+      font-size: 13px;
+      letter-spacing: 0.2px;
+      color: var(--c-text);
+      outline: none;
+      transition: border-color 0.15s, box-shadow 0.15s;
+    }
+    .url-input::placeholder {
+      color: var(--c-text-dim);
+      font-family: var(--font-mono);
+    }
+    .url-input:focus {
+      border-color: var(--c-purple);
+      box-shadow: 0 0 0 3px var(--c-purple-dim);
+    }
+    .url-input.invalid {
+      border-color: var(--c-red);
+      box-shadow: 0 0 0 3px var(--c-red-dim);
+    }
+
+    /* Validation hint */
+    .url-validation {
+      margin: 0 24px 10px;
+      font-size: 12px;
+      color: var(--c-red);
+      min-height: 16px;
+    }
+    .url-validation:empty { display: none; }
+
+    /* URL list */
+    .url-list-wrap { margin: 0 24px 20px; }
+    .url-list { display: flex; flex-direction: column; gap: 8px; }
+
+    .url-empty {
+      text-align: center;
+      padding: 28px 20px;
+      background: var(--c-surface2);
+      border: 1px dashed var(--c-border2);
+      border-radius: var(--radius-sm);
+      color: var(--c-text-muted);
+      font-size: 13px;
+    }
+
+    .url-item {
+      background: var(--c-surface2);
+      border: 1px solid var(--c-border);
+      border-radius: 10px;
+      padding: 10px 14px;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      animation: url-fade-in 0.2s ease-out;
+    }
+    @keyframes url-fade-in {
+      from { opacity: 0; transform: translateY(-4px); }
+      to   { opacity: 1; transform: translateY(0); }
+    }
+
+    .url-item-icon {
+      width: 32px; height: 32px;
+      border-radius: 9px;
+      background: var(--c-purple-dim);
+      color: var(--c-purple-l);
+      display: flex; align-items: center; justify-content: center;
+      font-size: 14px;
+      flex-shrink: 0;
+    }
+
+    .url-item-text {
+      flex: 1;
+      min-width: 0;
+      font-family: var(--font-mono);
+      font-size: 12.5px;
+      letter-spacing: 0.2px;
+      color: var(--c-text);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .url-item-remove {
+      background: none;
+      border: none;
+      color: var(--c-text-dim);
+      cursor: pointer;
+      font-size: 15px;
+      padding: 4px 6px;
+      transition: color 0.15s;
+      flex-shrink: 0;
+      line-height: 1;
+    }
+    .url-item-remove:hover { color: var(--c-red); }
+
+    /* ── Button — matches Extract Text screenshot ─────────────── */
+    /* Flat, subtle gradient, NO outer glow, chunky padding, generous radius */
+    .btn-purple {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      padding: 16px 32px;
+      border-radius: 14px;
+      font-family: var(--font);
+      font-size: 17px;
+      font-weight: 700;
+      letter-spacing: 0.2px;
+      cursor: pointer;
+      border: none;
+      color: #fff;
+      background: linear-gradient(135deg, #8b5cf6 0%, #6d28d9 100%);
+      /* Thin top-edge highlight only — no outer glow */
+      box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.18);
+      transition: filter 0.15s ease, transform 0.1s ease;
+      flex-shrink: 0;
+      white-space: nowrap;
+    }
+    .btn-purple:hover:not(:disabled) {
+      filter: brightness(1.08);
+    }
+    .btn-purple:active:not(:disabled) {
+      transform: translateY(1px);
+      filter: brightness(0.95);
+    }
+    .btn-purple:disabled {
+      opacity: 0.4;
+      cursor: not-allowed;
+    }
+
+    /* Counter pill */
+    .url-counter {
+      display: inline-flex;
+      align-items: center;
+      padding: 4px 12px;
+      border-radius: 20px;
+      font-size: 12px;
+      font-weight: 600;
+      background: var(--c-purple-dim);
+      color: var(--c-purple-l);
+      border: 1px solid rgba(124, 58, 237, 0.3);
+      font-variant-numeric: tabular-nums;
+      flex-shrink: 0;
+      transition: all 0.2s;
+    }
+    .url-counter.full {
+      background: var(--c-amber-dim);
+      color: var(--c-amber);
+      border-color: rgba(245, 158, 11, 0.3);
+    }
+
+    /* Action row — spacing between the big buttons */
+    .extract-row {
+      display: flex;
+      align-items: center;
+      gap: 14px;
+      flex-wrap: wrap;
+    }

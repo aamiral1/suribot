@@ -13,15 +13,20 @@ from embedder import embed_chunks
 from pinecone_store import get_or_create_index, upsert_chunks, hybrid_query, query_index
 from structured_chunker import split_into_sections, chunk_sections_with_fallback
 from hybrid_retriever import hybrid_retrieve
+from crawler import crawl_url
+from web_chunker import clean_markdown, markdown_to_sections, detect_dominant_level
 import bm25_encoder as bm25_enc
 from enums import DocumentStatus, SourceType, AllowedFileTypes
 import boto3
 import botocore
+import re
 import threading
+import asyncio
 import custom_exceptions as ex
 import datetime
 import os
 import tempfile
+from urllib.parse import urlparse
 
 load_dotenv()
 
@@ -180,40 +185,105 @@ class ChatbotAPI(Resource):
 
         messages = []
 
-        SYSTEM_PROMPT = """You are the assistant for Suri Marketing, a social media marketing agency. You speak like a warm, knowledgeable member of their team — friendly, confident, not pushy, never robotic.
+        SYSTEM_PROMPT = """
+        You are the Customer Support and Sales Assistant for Suri Marketing - a social media marketing agency. You sound like a warm, switched-on member of the team — friendly, casual, confident. Never robotic, never salesy.
+
         ## Scope
         - You only help with questions about Suri Marketing: our services, packages, pricing, process, how we work with clients.
-        - If someone asks you to do something unrelated (write essays, translate, code, general advice, anything off-topic), politely redirect: "I'm here to help with questions about Suri Marketing — happy to tell you about what we offer if that's useful."
-        - Never mention being an AI, a language model, or that you have a "knowledge base" or "context." You're just Suri Marketing's assistant.
+        - If someone asks for something off-topic (essays, translation, code, general advice), politely redirect: "I'm just here for Suri Marketing stuff — happy to tell you what we do if that's useful."
+        - Never mention being an AI, a model, or having a "knowledge base." You're just the Suri assistant.
+
+        ## Primary Objective
+
+        Your main goal is to naturally guide conversations toward booking a discovery call.
+
+        - Do NOT push aggressively
+        - Do NOT jump to booking immediately
+        - First: answer → build understanding → create interest
+        - Then: suggest a discovery call as the next step when appropriate
 
         ## How to answer
-        - Every factual claim (prices, package details, services, policies) must come from information given to you in this conversation. If a fact isn't there, say so naturally: "I don't have that detail handy — the best person to answer that is someone from our team. Want me to point you to them?"
-        - Do NOT invent facts. But DO rephrase what you're given into natural conversational language. Never paste chunks verbatim. Think: how would a sales rep say this out loud?
-        - Lead with what the customer cares about (value, fit, outcome), then details.
-        - Keep replies short and scannable. Use bullets only when genuinely listing 3+ parallel items. Default to prose.
-        - If someone's rude or inappropriate, stay polite and steer back: "I'm here to help with Suri Marketing questions — let me know if there's something I can help with."
+        - Keep answers short and sweet like a human sales rep would do.
+        - Keep responses to a maximum of ~3 sentences unless more detail is clearly needed.
+        - Every factual claim (prices, packages, services, policies) must come from info given to you in this conversation. If you don't have it, say so naturally: "Don't have that one to hand — best to check with someone on the team."
+        - Don't invent facts. But don't paste things verbatim either — rephrase into how someone would actually say it out loud.
+        - Lead with what the person cares about, then the details.
+        - Do not ask multiple questions in one reply.
+        - Only ask a question if it clearly moves the conversation forward.
+        - If the user is just asking for information, prioritise answering over qualifying.
+        - Never guess or assume details about Suri Marketing’s services, pricing, or results.
+        - Only use information provided in the conversation or system context.
+        - If the user shows repeated interest or asks multiple detailed questions, move more directly toward suggesting a discovery call.
+        - If the user hesitates (e.g. "not sure", "seems expensive"), acknowledge it briefly and respond calmly without pressure.
+
+        ## Voice
+        - Use contractions. "We're," "you're," "don't," "can't." Always.
+        - Short sentences. Fragments are fine.
+        - Skip marketing-speak: no "end-to-end solutions," "leverage," "holistic," etc.
+        - Don't end every reply with a question. Only ask one when it genuinely moves the conversation forward.
+        - Bullets only for 3+ parallel items. Default to prose.
+        - If someone's rude, stay polite and steer back: "Here to help with Suri Marketing — let me know if there's something I can sort for you."
+
+        ## Lead Qualification & Conversion Behaviour
+        - If the user shows interest, ask simple questions to understand:
+        - Their business
+        - Their goals
+        - Their current situation
+
+        - Use this to:
+        - Personalise responses
+        - Make the service feel relevant
+
+        - When the user is:
+        - Curious → educate
+        - Engaged → qualify
+        - Interested → guide to booking
+
+        ---
+
+        ### When to Suggest a Discovery Call
+
+        Suggest a call when:
+        - The user asks about pricing or services in detail
+        - The user asks “will this work for me?”
+        - The user shows clear interest
+        - The conversation reaches a natural pause
+
+        ---
+
+        ### How to Suggest It
+
+        Keep it low-pressure and natural:
+
+        Examples:
+        - “Might be easier to walk through this on a quick call — want me to set that up?”
+        - “We could go through this properly on a quick discovery call if you want”
+        - “Happy to show you exactly how this would work for your business on a call”
+
+        - You are representing a real company, so responses should feel grounded, confident, and aligned with a real service offering — not hypothetical
 
         ## Examples of good style
-        User: What services do you offer?
-        You: We run social media marketing campaigns end-to-end — content strategy, video creation, posting and scheduling across Instagram, TikTok, and Facebook, plus profile optimisation and caption writing. We have two packages depending on how much content you want each month (10 or 14 videos), both starting from a 4-month campaign. Want me to walk you through the pricing?
 
-        User: How much does it cost?
-        You: Our packages start at £995/month for 10 videos across your social channels, or £1195/month for 14 videos — both include the full service: strategy, filming guidance, editing, captions, scheduling, the lot. If you'd rather pay upfront, you save £100/month on either one (so £895 or £1095). Do you have a rough sense of how much content you're wanting each week? That usually makes it easier to figure out which one fits.
+        User: What services do you offer?  
+        You: We do social media content across Instagram, TikTok, and Facebook — strategy, filming guidance, editing, captions, scheduling, the lot. Two packages depending on how much content you want each month (10 or 14 videos), both run on a 4-month minimum. Want the pricing?
 
-        User: What's the difference between Package A and B?
-        You: Honestly the main difference is volume — Package A gets you 10 videos every 4 weeks, Package B gets you 14. Everything else is the same: same strategy work, same platforms (Instagram, TikTok, Facebook), same editing and posting. Package B works well if you're trying to grow fast or post most days; Package A is plenty if you're building steadily. What are you hoping to achieve with your socials?
+        User: How much does it cost?  
+        You: £995/month for 10 videos, £1195/month for 14. Both cover everything — strategy, editing, captions, posting. Pay upfront and it drops £100/month either way.
 
-        User: Why is the minimum 4 months?
-        You: Social media takes a bit of runway to actually work — the first month or two is mostly building up content, testing what lands with your audience, and letting the platforms figure out who to show you to. Four months gives us enough time to show you real results rather than just posts going out. Most clients start seeing momentum around month two or three.
+        User: What's the difference between Package A and B?  
+        You: Honestly just volume. A is 10 videos every 4 weeks, B is 14. Same strategy, same platforms, same everything else. B makes sense if you want to post most days; A's plenty if you're building steadily.
 
-        User: Do you do Google Ads?
-        You: That's not something we handle — we focus on organic social media content across Instagram, TikTok, and Facebook rather than paid ads. If content and community-building on those platforms is useful for you though, I'd love to tell you more about how we work.
+        User: Why is the minimum 4 months?  
+        You: Social takes a bit to get going. First month or two is mostly building content and letting the algorithm work out who to show you to. Four months gives us room to actually move the needle — most people see things click around month two or three.
 
-        User: Can you write me a caption for my post about coffee?
-        You: I'm here to chat about how Suri Marketing could help with your social media — writing captions is actually part of what we do for our clients as part of a full content package. Happy to tell you more about that if it's useful?
+        User: Do you do Google Ads?  
+        You: Nah, we don't do paid ads — we're organic-only across Instagram, TikTok, and Facebook. If content on those is what you're after though, happy to tell you more.
 
-        User: What's your refund policy?
-        You: I don't have that detail handy — that's best answered by someone on our team directly. Want me to point you their way?
+        User: Can you write me a caption for my post about coffee?  
+        You: Caption-writing's part of what we do for clients, not really a one-off thing. Want to hear how the content side works?
+
+        User: What's your refund policy?  
+        You: Don't have that one to hand — probably easier to run through it on a quick call if you want.
         """
 
         messages.append({"role": "system", "content": SYSTEM_PROMPT})
@@ -234,7 +304,7 @@ class ChatbotAPI(Resource):
                     query=user_message,
                     client=client,
                     pinecone_index=pinecone_index,
-                    top_k=4,
+                    top_k=8,
                     alpha=retrieval_alpha,
                 )
                 if retrieved:
@@ -451,12 +521,14 @@ def _chunk_and_embed_job(doc_id):
         print(f"[KB] Chunking text ({len(text)} chars)...")
         if strategy == ChunkingStrategy.SECTION_AND_SEMANTIC:
             chunks = chunk_sections_with_fallback(text, api_key=os.getenv("OPENAI_API_KEY"))
-        elif strategy == ChunkingStrategy.RECURSIVE_TOKEN:
-            chunks = chunk_text_recursive(text)
-        elif strategy == ChunkingStrategy.FIXED_SIZE:
-            chunks = chunk_text_fixed(text)
-        else:  # SEMANTIC_ONLY
-            chunks = chunk_text(text, api_key=os.getenv("OPENAI_API_KEY"))
+        else:
+            clean_text = re.sub(r'\[HEADING\]\s*', '', text)
+            if strategy == ChunkingStrategy.RECURSIVE_TOKEN:
+                chunks = chunk_text_recursive(clean_text)
+            elif strategy == ChunkingStrategy.FIXED_SIZE:
+                chunks = chunk_text_fixed(clean_text)
+            else:  # SEMANTIC_ONLY
+                chunks = chunk_text(clean_text, api_key=os.getenv("OPENAI_API_KEY"))
         print(f"[KB] Produced {len(chunks)} chunks.")
 
         # embed (dense)
@@ -519,6 +591,115 @@ def _chunk_and_embed_job(doc_id):
     except Exception as e:
         print(f"[KB] Error during chunk + embed job: {e}")
         db.set_kb_status(doc_id, "failed")
+
+
+def _crawl_and_embed_job(url_id, url):
+    strategy = get_chunking_strategy()
+    print(f"\n[WEB] Starting crawl + embed job for url_id: {url_id} (strategy: {strategy.value})")
+    try:
+        db.set_url_crawl_status(url_id, "processing")
+
+        # crawl URL and get markdown
+        raw_markdown = asyncio.run(crawl_url(url))
+        print(f"[WEB] Crawled {url} — {len(raw_markdown)} chars of markdown")
+        print(f"\n[WEB] ── Full extracted markdown ──────────────────────\n{raw_markdown}\n──────────────────────────────────────────────────────\n")
+        # clean noise (all strategies)
+        cleaned = clean_markdown(raw_markdown)
+        print(f"\n[WEB] ── Full cleaned markdown ──────────────────────\n{cleaned}\n──────────────────────────────────────────────────────\n")
+        # clean noise (all strategies)
+
+        # section-based only: detect dominant header and insert [HEADING] markers
+        if strategy == ChunkingStrategy.SECTION_AND_SEMANTIC:
+            dominant = detect_dominant_level(cleaned)
+            print(f"[WEB] Dominant header tag selected: {dominant}")
+            text = markdown_to_sections(cleaned)
+            print(f"\n[WEB] ── Section Chunked Markdown ──────────────────────\n{text}\n──────────────────────────────────────────────────────\n")
+
+        else:
+            text = cleaned
+
+        # upload processed text to S3
+        s3_key = f"{url_id}.txt"
+        s3.meta.client.put_object(Bucket=bucket_name, Key=s3_key, Body=text.encode("utf-8"))
+        db.set_url_text_path(url_id, bucket_name, s3_key)
+
+        # chunk using selected strategy
+        print(f"[WEB] Chunking text ({len(text)} chars)...")
+        if strategy == ChunkingStrategy.SECTION_AND_SEMANTIC:
+            chunks = chunk_sections_with_fallback(text, api_key=os.getenv("OPENAI_API_KEY"))
+        elif strategy == ChunkingStrategy.RECURSIVE_TOKEN:
+            chunks = chunk_text_recursive(text)
+        elif strategy == ChunkingStrategy.FIXED_SIZE:
+            chunks = chunk_text_fixed(text)
+        else:  # SEMANTIC_ONLY
+            chunks = chunk_text(text, api_key=os.getenv("OPENAI_API_KEY"))
+        print(f"[WEB] Produced {len(chunks)} chunks.")
+        for i, chunk in enumerate(chunks):
+            print(f"\n[WEB] ── Chunk {i+1}/{len(chunks)} ──────────────────────────────\n{chunk}\n")
+
+        # embed (dense)
+        embedded_chunks = embed_chunks(client, chunks)
+
+        # build chunk rows for webpage_chunks
+        chunk_rows = [
+            {
+                "chunk_id": c["chunk_index"],
+                "text": c["text"],
+                "heading": None,
+            }
+            for c in embedded_chunks
+        ]
+
+        # encode sparse vectors
+        encoder = bm25_enc.get_encoder()
+        texts = [c["text"] for c in embedded_chunks]
+        if encoder is not None:
+            sparse_vectors = bm25_enc.encode_documents(encoder, texts)
+        else:
+            encoder = bm25_enc.fit_and_save(texts, s3, bucket_name)
+            sparse_vectors = bm25_enc.encode_documents(encoder, texts)
+
+        # build format expected by upsert_chunks
+        chunks_for_upsert = [
+            {
+                "chunk_id": c["chunk_index"],
+                "text": c["text"],
+                "embedding": c["embedding"],
+            }
+            for c in embedded_chunks
+        ]
+
+        # upsert to Pinecone with dense + sparse vectors
+        print(f"[WEB] Upserting {len(chunks_for_upsert)} hybrid vectors to Pinecone...")
+        pinecone_index = get_or_create_index(
+            api_key=os.getenv("PINECONE_API_KEY"),
+            index_name=os.getenv("PINECONE_INDEX_NAME"),
+        )
+        upsert_chunks(pinecone_index, url_id, chunks_for_upsert, sparse_vectors)
+
+        # persist chunk rows to webpage_chunks table
+        db.insert_webpage_chunks(url_id, chunk_rows)
+        print(f"[WEB] Inserted {len(chunk_rows)} rows into webpage_chunks.")
+
+        # refit and save BM25 encoder with updated corpus (docs + webpages)
+        all_chunks = db.get_all_chunks()
+        bm25_enc.fit_and_save(
+            [c["text"] for c in all_chunks],
+            s3,
+            bucket_name,
+        )
+
+        # mark as in KB
+        db.set_url_in_kb(url_id)
+        db.set_url_kb_status(url_id, "success")
+        db.set_url_crawl_status(url_id, "success")
+        print(f"[WEB] URL {url_id} marked as in_kb=TRUE.")
+
+    except Exception as e:
+        print(f"[WEB] Error during crawl + embed job: {e}")
+        db.set_url_crawl_status(url_id, "failed")
+        db.set_url_kb_status(url_id, "failed")
+        db.set_url_error(url_id, str(e))
 
 
 @app.route("/query", methods=["POST"])
@@ -605,7 +786,7 @@ def admin():
     form = UploadFileForm()
 
     if request.method == "GET":
-        return render_template("admin.html", form=form)
+        return render_template("admin.html", form=form, active_page="files")
 
     if form.validate_on_submit():
         file = form.file.data  # get the uploaded file data sent from frontend
@@ -782,7 +963,35 @@ def extract_text():
     else:
         msg = {"status": "error"}
         return jsonify(msg), 500
+    
+@app.route("/sitemap", methods=["GET"])
+def sitemap():
+    return render_template('sitemap.html', active_page="sitemap")
 
+
+@app.route("/parse", methods=["POST"])
+def parse_urls():
+    data = request.get_json()
+    urls = data.get("urls", [])
+
+    if not urls:
+        return jsonify({"error": "No URLs provided"}), 400
+
+    queued = []
+    for url in urls:
+        domain = urlparse(url).netloc
+        url_id = db.create_url(url, domain)
+        t = threading.Thread(target=_crawl_and_embed_job, args=(url_id, url), daemon=True)
+        t.start()
+        queued.append({"url": url, "url_id": url_id})
+
+    return jsonify({"queued": queued}), 202
+
+
+@app.route("/webpage/<url_id>/status", methods=["GET"])
+def webpage_status(url_id):
+    status = db.get_webpage_status(url_id)
+    return jsonify(status)
 
 
 # AWS S3 Helper Functions

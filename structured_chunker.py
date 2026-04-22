@@ -88,7 +88,7 @@ def split_into_sections(text: str) -> list[dict]:
             "chunk_id": idx,
             "heading": section["heading"],
             "text": (
-                f"[HEADING] {section['heading']}\n\n{section['body']}"
+                f"{section['heading']}\n\n{section['body']}"
                 if section["heading"]
                 else section["body"]
             ).strip(),

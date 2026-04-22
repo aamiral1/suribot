@@ -1,0 +1,56 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>{% block title %}SuriBot Admin{% endblock %}</title>
+  <link rel="stylesheet" href="{{ url_for('static',filename='styles/admin.css') }}" />
+</head>
+<body>
+
+<div class="layout">
+
+  <!-- ── Sidebar ──────────────────────────────────────────────── -->
+  <aside class="sidebar">
+    <div class="sidebar__brand">
+      <div class="brand-icon">✦</div>
+      <div>
+        <div class="brand-name">Suri Marketing</div>
+        <div class="brand-sub">Admin Dashboard</div>
+      </div>
+    </div>
+
+    <nav class="sidebar__nav">
+      <div class="nav-section-label">Overview</div>
+      <a class="nav-item" href="#"><span class="nav-icon">📊</span> Analytics</a>
+      <a class="nav-item" href="#"><span class="nav-icon">💬</span> Conversations <span class="nav-badge">12</span></a>
+      <a class="nav-item" href="#"><span class="nav-icon">📅</span> Bookings</a>
+
+      <div class="nav-section-label">Knowledge Base</div>
+      <a class="nav-item {% if active_page == 'files' %}active{% endif %}" href="/admin"><span class="nav-icon">📚</span> Files &amp; Uploads</a>
+      <a class="nav-item {% if active_page == 'sitemap' %}active{% endif %}" href="/sitemap"><span class="nav-icon">🔗</span> Sitemap Parser</a>
+
+      <div class="nav-section-label">Settings</div>
+      <a class="nav-item" href="#"><span class="nav-icon">🤖</span> Bot Behaviour</a>
+      <a class="nav-item" href="#"><span class="nav-icon">🔐</span> Access &amp; Security</a>
+    </nav>
+
+    <div class="sidebar__footer">
+      <div class="user-row">
+        <div class="user-avatar">👤</div>
+        <div>
+          <div class="user-name">Admin</div>
+          <div class="user-role">Suri Marketing</div>
+        </div>
+      </div>
+    </div>
+  </aside>
+
+  <!-- ── Main ─────────────────────────────────────────────────── -->
+  {% block main %}{% endblock %}
+
+</div><!-- /layout -->
+
+{% block scripts %}{% endblock %}
+</body>
+</html>

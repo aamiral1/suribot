@@ -26,7 +26,11 @@ async function addMessage(message, role){
     // chat bubble
     const bubble = document.createElement("div");
     bubble.classList.add("vb-bubble", role);
-    bubble.textContent = message;
+    if (role === 'agent' && typeof marked !== 'undefined') {
+        bubble.innerHTML = marked.parse(message);
+    } else {
+        bubble.textContent = message;
+    }
 
     row.appendChild(bubble);
 

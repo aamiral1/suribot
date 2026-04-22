@@ -185,6 +185,25 @@ body {
   border-radius: 16px 4px 16px 16px;
 }
 
+/* Markdown inside agent bubbles */
+.vb-bubble.agent p { margin: 0 0 0.5em; }
+.vb-bubble.agent p:last-child { margin-bottom: 0; }
+.vb-bubble.agent ul,
+.vb-bubble.agent ol { margin: 0.25em 0 0.5em 1.2em; padding: 0; }
+.vb-bubble.agent li { margin-bottom: 0.2em; }
+.vb-bubble.agent strong { font-weight: 700; }
+.vb-bubble.agent em { font-style: italic; }
+.vb-bubble.agent h1,
+.vb-bubble.agent h2,
+.vb-bubble.agent h3 { font-size: 1em; font-weight: 700; margin: 0.5em 0 0.25em; }
+.vb-bubble.agent code {
+  background: #f0eeff;
+  border-radius: 3px;
+  padding: 1px 5px;
+  font-family: monospace;
+  font-size: 0.9em;
+}
+
 /* CTA */
 .vb-cta {
   width: calc(100% - 32px);

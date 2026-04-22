@@ -93,6 +93,32 @@ class Database:
                 ALTER TABLE {self.doc_table} ADD COLUMN IF NOT EXISTS doc_type TEXT NOT NULL DEFAULT 'knowledge_base';
                 ALTER TABLE {self.doc_table} ADD COLUMN IF NOT EXISTS doc_structure TEXT NOT NULL DEFAULT 'free_flow';
 
+                CREATE TABLE IF NOT EXISTS webpages (
+                    url_id         TEXT PRIMARY KEY,
+                    url            TEXT NOT NULL,
+                    domain         TEXT,
+                    crawled_date   DATE NOT NULL,
+                    crawl_status   extraction_status NOT NULL,
+                    kb_status      kb_status_type NOT NULL DEFAULT 'none',
+                    in_kb          BOOLEAN DEFAULT FALSE,
+                    error_msg      TEXT,
+                    s3_text_bucket TEXT,
+                    s3_text_key    TEXT
+                );
+
+                CREATE TABLE IF NOT EXISTS webpage_chunks (
+                    id       SERIAL PRIMARY KEY,
+                    url_id   TEXT NOT NULL,
+                    chunk_id INTEGER NOT NULL,
+                    text     TEXT NOT NULL,
+                    heading  TEXT
+                );
+
+                CREATE INDEX IF NOT EXISTS idx_webpage_chunks_url_id
+                    ON webpage_chunks(url_id);
+                CREATE INDEX IF NOT EXISTS idx_webpage_chunks_chunk
+                    ON webpage_chunks(url_id, chunk_id);
+
                 CREATE TABLE IF NOT EXISTS document_chunks (
                     id       SERIAL PRIMARY KEY,
                     doc_id   TEXT NOT NULL,
@@ -474,12 +500,16 @@ class Database:
             cursor.close()
             self._put_conn(connection)
 
-    # returns all chunks across all documents (used to rebuild BM25 encoder)
+    # returns all chunks across documents and webpages (used to rebuild BM25 encoder)
     def get_all_chunks(self):
         connection = self._get_conn()
         cursor = connection.cursor()
 
-        command = """SELECT doc_id, chunk_id, text FROM document_chunks"""
+        command = """
+            SELECT doc_id, chunk_id, text FROM document_chunks
+            UNION ALL
+            SELECT url_id, chunk_id, text FROM webpage_chunks
+        """
 
         try:
             cursor.execute(command)
@@ -492,6 +522,173 @@ class Database:
                 }
                 for row in rows
             ]
+        except Exception as e:
+            connection.rollback()
+            raise Exception(f"Error: {e}")
+        finally:
+            cursor.close()
+            self._put_conn(connection)
+
+    # creates a record for a crawled URL
+    def create_url(self, url, domain):
+        connection = self._get_conn()
+        cursor = connection.cursor()
+
+        url_id = str(uuid.uuid4())
+
+        command = """INSERT INTO webpages
+            (url_id, url, domain, crawled_date, crawl_status)
+            VALUES (%s, %s, %s, %s, %s)"""
+
+        try:
+            cursor.execute(command, (url_id, url, domain, "now()", DocumentStatus.CREATED.value))
+            connection.commit()
+        except Exception as e:
+            connection.rollback()
+            raise Exception(f"Error: {e}")
+        finally:
+            cursor.close()
+            self._put_conn(connection)
+
+        return url_id
+
+    def set_url_crawl_status(self, url_id, status):
+        connection = self._get_conn()
+        cursor = connection.cursor()
+
+        command = "UPDATE webpages SET crawl_status = %s WHERE url_id = %s"
+
+        try:
+            cursor.execute(command, (status, url_id))
+            connection.commit()
+        except Exception as e:
+            connection.rollback()
+            raise Exception(f"Error: {e}")
+        finally:
+            cursor.close()
+            self._put_conn(connection)
+
+    def set_url_text_path(self, url_id, bucket, key):
+        connection = self._get_conn()
+        cursor = connection.cursor()
+
+        command = "UPDATE webpages SET s3_text_bucket = %s, s3_text_key = %s WHERE url_id = %s"
+
+        try:
+            cursor.execute(command, (bucket, key, url_id))
+            connection.commit()
+        except Exception as e:
+            connection.rollback()
+            raise Exception(f"Error: {e}")
+        finally:
+            cursor.close()
+            self._put_conn(connection)
+
+    def get_url_text_path(self, url_id):
+        connection = self._get_conn()
+        cursor = connection.cursor()
+
+        command = "SELECT s3_text_bucket, s3_text_key FROM webpages WHERE url_id = %s"
+
+        try:
+            cursor.execute(command, (url_id,))
+            row = cursor.fetchone()
+            if not row:
+                raise Exception("No webpage record for given url_id")
+            return [row[0], row[1]]
+        except Exception as e:
+            connection.rollback()
+            raise Exception(f"Error: {e}")
+        finally:
+            cursor.close()
+            self._put_conn(connection)
+
+    def set_url_in_kb(self, url_id):
+        connection = self._get_conn()
+        cursor = connection.cursor()
+
+        command = "UPDATE webpages SET in_kb = TRUE WHERE url_id = %s"
+
+        try:
+            cursor.execute(command, (url_id,))
+            connection.commit()
+        except Exception as e:
+            connection.rollback()
+            raise Exception(f"Error: {e}")
+        finally:
+            cursor.close()
+            self._put_conn(connection)
+
+    def set_url_kb_status(self, url_id, status):
+        connection = self._get_conn()
+        cursor = connection.cursor()
+
+        command = "UPDATE webpages SET kb_status = %s WHERE url_id = %s"
+
+        try:
+            cursor.execute(command, (status, url_id))
+            connection.commit()
+        except Exception as e:
+            connection.rollback()
+            raise Exception(f"Error: {e}")
+        finally:
+            cursor.close()
+            self._put_conn(connection)
+
+    def get_webpage_status(self, url_id: str) -> dict:
+        connection = self._get_conn()
+        cursor = connection.cursor()
+        try:
+            cursor.execute(
+                "SELECT crawl_status, kb_status, error_msg FROM webpages WHERE url_id = %s",
+                (url_id,)
+            )
+            row = cursor.fetchone()
+        finally:
+            cursor.close()
+            self._put_conn(connection)
+        if not row:
+            return {"crawl_status": "not_found", "kb_status": "not_found", "error_msg": None}
+        return {"crawl_status": row[0], "kb_status": row[1], "error_msg": row[2]}
+
+    def set_url_error(self, url_id, error_msg):
+        connection = self._get_conn()
+        cursor = connection.cursor()
+
+        command = "UPDATE webpages SET error_msg = %s WHERE url_id = %s"
+
+        try:
+            cursor.execute(command, (error_msg, url_id))
+            connection.commit()
+        except Exception as e:
+            connection.rollback()
+            raise Exception(f"Error: {e}")
+        finally:
+            cursor.close()
+            self._put_conn(connection)
+
+    def insert_webpage_chunks(self, url_id, rows):
+        connection = self._get_conn()
+        cursor = connection.cursor()
+
+        command = """INSERT INTO webpage_chunks
+            (url_id, chunk_id, text, heading)
+            VALUES (%s, %s, %s, %s)"""
+
+        try:
+            cursor.executemany(
+                command,
+                [
+                    (
+                        url_id,
+                        row["chunk_id"],
+                        row["text"],
+                        row.get("heading"),
+                    )
+                    for row in rows
+                ],
+            )
+            connection.commit()
         except Exception as e:
             connection.rollback()
             raise Exception(f"Error: {e}")

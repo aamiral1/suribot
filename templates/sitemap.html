@@ -1,0 +1,242 @@
+{% extends "base_admin.html" %}
+{% block title %}SuriBot — Sitemap Parser{% endblock %}
+
+{% block main %}
+  <main class="main">
+
+    <div class="topbar">
+      <div class="topbar__title">Sitemap Parser</div>
+      <div class="topbar__pill">
+        <span class="topbar__pill-dot"></span>
+        Chatbot Online
+      </div>
+    </div>
+
+    <div class="content">
+
+      <!-- URL management -->
+      <div class="kb-section">
+
+        <div class="kb-header">
+          <div>
+            <div class="section-head">
+              <h2>Add URLs to Parse</h2>
+              <span class="tag tag--purple">✦ Web Parser</span>
+            </div>
+            <p class="kb-desc">
+              Add up to 20 URLs. Each page will be fetched, parsed, chunked, embedded, and added to the vector knowledge base alongside your uploaded files.
+            </p>
+          </div>
+          <span class="url-counter" id="url-counter">0 / 20</span>
+        </div>
+
+        <!-- Input row -->
+        <div class="url-input-row">
+          <input
+            type="url"
+            id="url-input"
+            class="url-input"
+            placeholder="https://example.com/about"
+            autocomplete="off"
+            spellcheck="false"
+          />
+          <button id="add-url-btn" class="btn-purple" disabled>Add URL</button>
+        </div>
+        <div class="url-validation" id="url-validation"></div>
+
+        <!-- URL list -->
+        <div class="url-list-wrap">
+          <div class="queue-label">URLs to Parse</div>
+          <div class="url-list" id="url-list">
+            <div class="url-empty">No URLs added yet. Paste a URL above to get started.</div>
+          </div>
+        </div>
+
+        <!-- Actions -->
+        <div class="extract-row" style="margin: 0 24px 20px;">
+          <button id="parse-btn" class="btn-purple" disabled>Parse Websites</button>
+          <button id="clear-btn" class="btn-purple" disabled>Clear All</button>
+          <p id="parse-status" class="status-text"></p>
+        </div>
+      </div>
+
+    </div>
+  </main>
+{% endblock %}
+
+{% block scripts %}
+<script>
+  const MAX_URLS = 20;
+  let urls = [];
+
+  const urlInput   = document.getElementById('url-input');
+  const addBtn     = document.getElementById('add-url-btn');
+  const clearBtn   = document.getElementById('clear-btn');
+  const parseBtn   = document.getElementById('parse-btn');
+  const urlList    = document.getElementById('url-list');
+  const counter    = document.getElementById('url-counter');
+  const validation = document.getElementById('url-validation');
+  const status     = document.getElementById('parse-status');
+
+  function isValidUrl(str) {
+    try {
+      const u = new URL(str);
+      return u.protocol === 'http:' || u.protocol === 'https:';
+    } catch { return false; }
+  }
+
+  function escapeHtml(s) {
+    return s.replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+  }
+
+  function renderList() {
+    counter.textContent = `${urls.length} / ${MAX_URLS}`;
+    counter.classList.toggle('full', urls.length >= MAX_URLS);
+
+    if (urls.length === 0) {
+      urlList.innerHTML = '<div class="url-empty">No URLs added yet. Paste a URL above to get started.</div>';
+    } else {
+      urlList.innerHTML = urls.map((url, i) => `
+        <div class="url-item">
+          <div class="url-item-icon">🔗</div>
+          <div class="url-item-text" title="${escapeHtml(url)}">${escapeHtml(url)}</div>
+          <button class="url-item-remove" data-index="${i}" aria-label="Remove URL">✕</button>
+        </div>
+      `).join('');
+      urlList.querySelectorAll('.url-item-remove').forEach(btn => {
+        btn.addEventListener('click', () => {
+          urls.splice(Number(btn.dataset.index), 1);
+          renderList();
+        });
+      });
+    }
+
+    clearBtn.disabled = urls.length === 0;
+    parseBtn.disabled = urls.length === 0;
+    updateAddState();
+  }
+
+  function updateAddState() {
+    addBtn.disabled = !urlInput.value.trim() || urls.length >= MAX_URLS;
+  }
+
+  function addUrl() {
+    const val = urlInput.value.trim();
+    validation.textContent = '';
+    urlInput.classList.remove('invalid');
+
+    if (!val) return;
+    if (urls.length >= MAX_URLS) {
+      validation.textContent = `You can only add up to ${MAX_URLS} URLs.`;
+      return;
+    }
+    if (!isValidUrl(val)) {
+      validation.textContent = 'Please enter a valid URL starting with http:// or https://';
+      urlInput.classList.add('invalid');
+      return;
+    }
+    if (urls.includes(val)) {
+      validation.textContent = 'That URL is already in the list.';
+      urlInput.classList.add('invalid');
+      return;
+    }
+
+    urls.push(val);
+    urlInput.value = '';
+    renderList();
+    urlInput.focus();
+  }
+
+  addBtn.addEventListener('click', addUrl);
+
+  urlInput.addEventListener('input', () => {
+    validation.textContent = '';
+    urlInput.classList.remove('invalid');
+    updateAddState();
+  });
+
+  urlInput.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') { e.preventDefault(); addUrl(); }
+  });
+
+  clearBtn.addEventListener('click', () => {
+    if (urls.length === 0) return;
+    if (!confirm(`Remove all ${urls.length} URL(s)?`)) return;
+    urls = [];
+    renderList();
+    status.textContent = '';
+  });
+
+  parseBtn.addEventListener('click', async () => {
+    if (urls.length === 0) return;
+
+    parseBtn.disabled = true;
+    clearBtn.disabled = true;
+    addBtn.disabled   = true;
+    status.textContent = `Starting parse for ${urls.length} URL(s)…`;
+
+    try {
+      const res = await fetch('/parse', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ urls }),
+      });
+
+      if (!res.ok) {
+        status.textContent = 'Parse failed to start. Please try again.';
+        clearBtn.disabled = urls.length === 0;
+        parseBtn.disabled = urls.length === 0;
+        updateAddState();
+        return;
+      }
+
+      const data = await res.json();
+      const queued = data.queued;
+      const total  = queued.length;
+      status.textContent = `Processing ${total} URL(s)…`;
+
+      const pending = new Set(queued.map(q => q.url_id));
+      let failed = 0;
+
+      const poll = setInterval(async () => {
+        for (const url_id of [...pending]) {
+          try {
+            const r = await fetch(`/webpage/${url_id}/status`);
+            const s = await r.json();
+            if (s.kb_status === 'success') {
+              pending.delete(url_id);
+            } else if (s.kb_status === 'failed') {
+              pending.delete(url_id);
+              failed++;
+            }
+          } catch (e) {
+            console.error('Poll error for', url_id, e);
+          }
+        }
+
+        if (pending.size === 0) {
+          clearInterval(poll);
+          if (failed === 0) {
+            status.textContent = `✓ All ${total} URL(s) added to knowledge base.`;
+          } else if (failed === total) {
+            status.textContent = `✗ All URL(s) failed to process.`;
+          } else {
+            status.textContent = `⚠ ${failed} of ${total} URL(s) failed. Check server logs.`;
+          }
+          clearBtn.disabled = urls.length === 0;
+          parseBtn.disabled = urls.length === 0;
+          updateAddState();
+        }
+      }, 1500);
+
+    } catch (err) {
+      status.textContent = 'Network error. Please try again.';
+      clearBtn.disabled = urls.length === 0;
+      parseBtn.disabled = urls.length === 0;
+      updateAddState();
+    }
+  });
+
+  renderList();
+</script>
+{% endblock %}
