@@ -78,7 +78,7 @@ def split_into_sections(text: str) -> list[dict]:
     if total > 0 and merge_count / total >= MERGE_WARNING_THRESHOLD:
         print(
             f"[structured_chunker] WARNING: {merge_count}/{total} sections were merged due to "
-            f"short body text (<{MIN_PARENT_WORDS} words). Heading detection may be unreliable."
+            f"short body text (<{MIN_SECTION_WORDS} words). Heading detection may be unreliable."
         )
 
     # Assign chunk_ids

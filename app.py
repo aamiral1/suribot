@@ -8,7 +8,7 @@ from werkzeug.utils import secure_filename
 from database import Database
 from doc_parser import extract_doc_info
 from chunker import chunk_text, chunk_text_recursive, chunk_text_fixed
-from config import ChunkingStrategy, get_chunking_strategy
+from config import ChunkingStrategy, get_chunking_strategy, get_retrieval_alpha
 from embedder import embed_chunks
 from pinecone_store import get_or_create_index, upsert_chunks, hybrid_query, query_index
 from structured_chunker import split_into_sections, chunk_sections_with_fallback
@@ -144,8 +144,9 @@ db.init_schema()
 # In-memory system prompt cache — rebuilt on startup and after each system prompt doc is added to KB
 system_prompt_cache = ""
 
-# Retrieval alpha — blend between semantic (1.0) and keyword (0.0), default equal weight
-retrieval_alpha = 0.5
+# Retrieval alpha — read from RETRIEVAL_STRATEGY in .env (hybrid=0.5, dense=1.0, sparse=0.0)
+retrieval_alpha = get_retrieval_alpha()
+
 
 def _rebuild_system_prompt_cache():
     global system_prompt_cache
@@ -155,6 +156,7 @@ def _rebuild_system_prompt_cache():
     system_prompt_cache = "\n\n".join(parts).strip()
     print(f"[Cache] System prompt cache rebuilt ({len(system_prompt_cache)} chars).")
     print(system_prompt_cache)
+
 
 # Initialise AWS S3 Client
 s3 = boto3.resource(
@@ -204,6 +206,7 @@ class ChatbotAPI(Resource):
 
         ## How to answer
         - Keep answers short and sweet like a human sales rep would do.
+        - If you are listing different packages, items, etc. please use bullet lists.
         - Keep responses to a maximum of ~3 sentences unless more detail is clearly needed.
         - Every factual claim (prices, packages, services, policies) must come from info given to you in this conversation. If you don't have it, say so naturally: "Don't have that one to hand — best to check with someone on the team."
         - Don't invent facts. But don't paste things verbatim either — rephrase into how someone would actually say it out loud.
@@ -215,7 +218,8 @@ class ChatbotAPI(Resource):
         - Only use information provided in the conversation or system context.
         - If the user shows repeated interest or asks multiple detailed questions, move more directly toward suggesting a discovery call.
         - If the user hesitates (e.g. "not sure", "seems expensive"), acknowledge it briefly and respond calmly without pressure.
-
+        - If a service, feature, or capability is asked about and is not offered, clearly say no in a natural way. Do not redirect unless the question is completely unrelated to Suri Marketing.
+        
         ## Voice
         - Use contractions. "We're," "you're," "don't," "can't." Always.
         - Short sentences. Fragments are fine.
@@ -291,11 +295,11 @@ class ChatbotAPI(Resource):
         # if system_prompt_cache:
         #     messages.append({"role": "system", "content": system_prompt_cache})
 
-
         # Retrieve relevant chunks from the knowledge base
         context_block = ""
         try:
             from pinecone import Pinecone
+
             pc = Pinecone(api_key=os.getenv("PINECONE_API_KEY"))
             index_name = os.getenv("PINECONE_INDEX_NAME")
             if index_name in [i.name for i in pc.list_indexes()]:
@@ -308,7 +312,9 @@ class ChatbotAPI(Resource):
                     alpha=retrieval_alpha,
                 )
                 if retrieved:
-                    print(f"\n[/api] Retrieved {len(retrieved)} chunk(s) for query: '{user_message}'")
+                    print(
+                        f"\n[/api] Retrieved {len(retrieved)} chunk(s) for query: '{user_message}'"
+                    )
                     for i, r in enumerate(retrieved, 1):
                         print(f"  [{i}] {r['text']}")
                     context_block = "\n\n---\n\n".join(r["text"] for r in retrieved)
@@ -316,20 +322,22 @@ class ChatbotAPI(Resource):
             print(f"[ChatbotAPI] RAG retrieval failed, continuing without context: {e}")
 
         if context_block:
-            messages.append({
-            "role": "system",
-            "content": (
-                "Relevant information for the user's current question "
-                "(use this as your source of truth, but rephrase naturally — "
-                "do not paste it verbatim):\n\n"
-                f"{context_block}"
+            messages.append(
+                {
+                    "role": "system",
+                    "content": (
+                        "Relevant information for the user's current question "
+                        "(use this as your source of truth, but rephrase naturally — "
+                        "do not paste it verbatim):\n\n"
+                        f"{context_block}"
+                    ),
+                }
             )
-        })
 
         messages.append({"role": "user", "content": user_message})
 
         response = client.chat.completions.create(
-            model="gpt-4o-mini", messages=messages
+            model="gpt-5.4-mini", messages=messages
         )
 
         return {"response": response.choices[0].message.content}, 200
@@ -440,14 +448,14 @@ def get_documents():
 
     documents = [
         {
-            "doc_id":        row[0],
-            "source_type":   row[1],
-            "file_name":     row[2],
-            "file_size":     row[3],
-            "file_type":     row[4],
+            "doc_id": row[0],
+            "source_type": row[1],
+            "file_name": row[2],
+            "file_size": row[3],
+            "file_type": row[4],
             "uploaded_date": str(row[5]),
-            "status":        row[8],
-            "in_kb":         row[12],
+            "status": row[8],
+            "in_kb": row[12],
         }
         for row in rows
     ]
@@ -511,7 +519,9 @@ def _system_prompt_job(doc_id):
 
 def _chunk_and_embed_job(doc_id):
     strategy = get_chunking_strategy()
-    print(f"\n[KB] Starting chunk + embed job for doc: {doc_id} (strategy: {strategy.value})")
+    print(
+        f"\n[KB] Starting chunk + embed job for doc: {doc_id} (strategy: {strategy.value})"
+    )
     try:
         # fetch extracted text from S3
         s3_bucket, s3_key = db.get_extracted_text_file_path(doc_id)
@@ -520,9 +530,11 @@ def _chunk_and_embed_job(doc_id):
         # chunk using selected strategy
         print(f"[KB] Chunking text ({len(text)} chars)...")
         if strategy == ChunkingStrategy.SECTION_AND_SEMANTIC:
-            chunks = chunk_sections_with_fallback(text, api_key=os.getenv("OPENAI_API_KEY"))
+            chunks = chunk_sections_with_fallback(
+                text, api_key=os.getenv("OPENAI_API_KEY")
+            )
         else:
-            clean_text = re.sub(r'\[HEADING\]\s*', '', text)
+            clean_text = re.sub(r"\[HEADING\]\s*", "", text)
             if strategy == ChunkingStrategy.RECURSIVE_TOKEN:
                 chunks = chunk_text_recursive(clean_text)
             elif strategy == ChunkingStrategy.FIXED_SIZE:
@@ -533,6 +545,12 @@ def _chunk_and_embed_job(doc_id):
 
         # embed (dense)
         embedded_chunks = embed_chunks(client, chunks)
+
+        # drop chunks with no alphabetic content — BM25 cannot encode them
+        before = len(embedded_chunks)
+        embedded_chunks = [c for c in embedded_chunks if any(ch.isalpha() for ch in c["text"])]
+        if len(embedded_chunks) < before:
+            print(f"[KB] Filtered out {before - len(embedded_chunks)} punctuation-only chunk(s).")
 
         # build chunk rows for document_chunks
         chunk_rows = [
@@ -549,6 +567,10 @@ def _chunk_and_embed_job(doc_id):
         texts = [c["text"] for c in embedded_chunks]
         if encoder is not None:
             sparse_vectors = bm25_enc.encode_documents(encoder, texts)
+            if any(not sv.get("indices") for sv in sparse_vectors):
+                print("[KB] Empty sparse vectors detected (stale encoder) — refitting on current chunks.")
+                encoder = bm25_enc.fit_and_save(texts, s3, bucket_name)
+                sparse_vectors = bm25_enc.encode_documents(encoder, texts)
         else:
             encoder = bm25_enc.fit_and_save(texts, s3, bucket_name)
             sparse_vectors = bm25_enc.encode_documents(encoder, texts)
@@ -595,17 +617,23 @@ def _chunk_and_embed_job(doc_id):
 
 def _crawl_and_embed_job(url_id, url):
     strategy = get_chunking_strategy()
-    print(f"\n[WEB] Starting crawl + embed job for url_id: {url_id} (strategy: {strategy.value})")
+    print(
+        f"\n[WEB] Starting crawl + embed job for url_id: {url_id} (strategy: {strategy.value})"
+    )
     try:
         db.set_url_crawl_status(url_id, "processing")
 
         # crawl URL and get markdown
         raw_markdown = asyncio.run(crawl_url(url))
         print(f"[WEB] Crawled {url} — {len(raw_markdown)} chars of markdown")
-        print(f"\n[WEB] ── Full extracted markdown ──────────────────────\n{raw_markdown}\n──────────────────────────────────────────────────────\n")
+        print(
+            f"\n[WEB] ── Full extracted markdown ──────────────────────\n{raw_markdown}\n──────────────────────────────────────────────────────\n"
+        )
         # clean noise (all strategies)
         cleaned = clean_markdown(raw_markdown)
-        print(f"\n[WEB] ── Full cleaned markdown ──────────────────────\n{cleaned}\n──────────────────────────────────────────────────────\n")
+        print(
+            f"\n[WEB] ── Full cleaned markdown ──────────────────────\n{cleaned}\n──────────────────────────────────────────────────────\n"
+        )
         # clean noise (all strategies)
 
         # section-based only: detect dominant header and insert [HEADING] markers
@@ -613,20 +641,26 @@ def _crawl_and_embed_job(url_id, url):
             dominant = detect_dominant_level(cleaned)
             print(f"[WEB] Dominant header tag selected: {dominant}")
             text = markdown_to_sections(cleaned)
-            print(f"\n[WEB] ── Section Chunked Markdown ──────────────────────\n{text}\n──────────────────────────────────────────────────────\n")
+            print(
+                f"\n[WEB] ── Section Chunked Markdown ──────────────────────\n{text}\n──────────────────────────────────────────────────────\n"
+            )
 
         else:
             text = cleaned
 
         # upload processed text to S3
         s3_key = f"{url_id}.txt"
-        s3.meta.client.put_object(Bucket=bucket_name, Key=s3_key, Body=text.encode("utf-8"))
+        s3.meta.client.put_object(
+            Bucket=bucket_name, Key=s3_key, Body=text.encode("utf-8")
+        )
         db.set_url_text_path(url_id, bucket_name, s3_key)
 
         # chunk using selected strategy
         print(f"[WEB] Chunking text ({len(text)} chars)...")
         if strategy == ChunkingStrategy.SECTION_AND_SEMANTIC:
-            chunks = chunk_sections_with_fallback(text, api_key=os.getenv("OPENAI_API_KEY"))
+            chunks = chunk_sections_with_fallback(
+                text, api_key=os.getenv("OPENAI_API_KEY")
+            )
         elif strategy == ChunkingStrategy.RECURSIVE_TOKEN:
             chunks = chunk_text_recursive(text)
         elif strategy == ChunkingStrategy.FIXED_SIZE:
@@ -635,10 +669,18 @@ def _crawl_and_embed_job(url_id, url):
             chunks = chunk_text(text, api_key=os.getenv("OPENAI_API_KEY"))
         print(f"[WEB] Produced {len(chunks)} chunks.")
         for i, chunk in enumerate(chunks):
-            print(f"\n[WEB] ── Chunk {i+1}/{len(chunks)} ──────────────────────────────\n{chunk}\n")
+            print(
+                f"\n[WEB] ── Chunk {i+1}/{len(chunks)} ──────────────────────────────\n{chunk}\n"
+            )
 
         # embed (dense)
         embedded_chunks = embed_chunks(client, chunks)
+
+        # drop chunks with no alphabetic content — BM25 cannot encode them
+        before = len(embedded_chunks)
+        embedded_chunks = [c for c in embedded_chunks if any(ch.isalpha() for ch in c["text"])]
+        if len(embedded_chunks) < before:
+            print(f"[WEB] Filtered out {before - len(embedded_chunks)} punctuation-only chunk(s).")
 
         # build chunk rows for webpage_chunks
         chunk_rows = [
@@ -655,6 +697,10 @@ def _crawl_and_embed_job(url_id, url):
         texts = [c["text"] for c in embedded_chunks]
         if encoder is not None:
             sparse_vectors = bm25_enc.encode_documents(encoder, texts)
+            if any(not sv.get("indices") for sv in sparse_vectors):
+                print("[WEB] Empty sparse vectors detected (stale encoder) — refitting on current chunks.")
+                encoder = bm25_enc.fit_and_save(texts, s3, bucket_name)
+                sparse_vectors = bm25_enc.encode_documents(encoder, texts)
         else:
             encoder = bm25_enc.fit_and_save(texts, s3, bucket_name)
             sparse_vectors = bm25_enc.encode_documents(encoder, texts)
@@ -708,6 +754,7 @@ def query_kb():
     query = data["query"]
 
     from pinecone import Pinecone
+
     pc = Pinecone(api_key=os.getenv("PINECONE_API_KEY"))
     index_name = os.getenv("PINECONE_INDEX_NAME")
     if index_name not in [i.name for i in pc.list_indexes()]:
@@ -733,6 +780,7 @@ def test_rag():
         return jsonify({"error": "query is required"}), 400
 
     from pinecone import Pinecone
+
     pc = Pinecone(api_key=os.getenv("PINECONE_API_KEY"))
     index_name = os.getenv("PINECONE_INDEX_NAME")
     if index_name not in [i.name for i in pc.list_indexes()]:
@@ -747,20 +795,25 @@ def test_rag():
         alpha=retrieval_alpha,
     )
 
-    return jsonify({
-        "query": query,
-        "alpha": retrieval_alpha,
-        "results": [
+    return (
+        jsonify(
             {
-                "rank": i + 1,
-                "score": round(r["score"], 4),
-                "doc_id": r["doc_id"],
-                "chunk_id": r["chunk_id"],
-                "text": r["text"],
+                "query": query,
+                "alpha": retrieval_alpha,
+                "results": [
+                    {
+                        "rank": i + 1,
+                        "score": round(r["score"], 4),
+                        "doc_id": r["doc_id"],
+                        "chunk_id": r["chunk_id"],
+                        "text": r["text"],
+                    }
+                    for i, r in enumerate(results)
+                ],
             }
-            for i, r in enumerate(results)
-        ],
-    }), 200
+        ),
+        200,
+    )
 
 
 @app.route("/config/alpha", methods=["POST"])
@@ -768,7 +821,11 @@ def set_alpha():
     global retrieval_alpha
     data = request.get_json()
     alpha = data.get("alpha")
-    if alpha is None or not isinstance(alpha, (int, float)) or not (0.0 <= alpha <= 1.0):
+    if (
+        alpha is None
+        or not isinstance(alpha, (int, float))
+        or not (0.0 <= alpha <= 1.0)
+    ):
         return jsonify({"error": "alpha must be a number between 0.0 and 1.0"}), 400
     retrieval_alpha = float(alpha)
     print(f"[config] retrieval_alpha updated to {retrieval_alpha}")
@@ -947,7 +1004,6 @@ def extract_text():
             print(f"Error: {e}")
             return jsonify(msg), 500
 
-
         msg = {"status": "began processing"}
 
         return jsonify(msg), 200
@@ -963,10 +1019,11 @@ def extract_text():
     else:
         msg = {"status": "error"}
         return jsonify(msg), 500
-    
+
+
 @app.route("/sitemap", methods=["GET"])
 def sitemap():
-    return render_template('sitemap.html', active_page="sitemap")
+    return render_template("sitemap.html", active_page="sitemap")
 
 
 @app.route("/parse", methods=["POST"])
@@ -981,7 +1038,9 @@ def parse_urls():
     for url in urls:
         domain = urlparse(url).netloc
         url_id = db.create_url(url, domain)
-        t = threading.Thread(target=_crawl_and_embed_job, args=(url_id, url), daemon=True)
+        t = threading.Thread(
+            target=_crawl_and_embed_job, args=(url_id, url), daemon=True
+        )
         t.start()
         queued.append({"url": url, "url_id": url_id})
 
@@ -1045,6 +1104,7 @@ def _get_file_type(filename: str) -> AllowedFileTypes:
         return AllowedFileTypes(ext_upper)
     except ValueError:
         raise ex.InvalidFileType(f"Unsupported file type: {ext_upper}")
+
 
 def _download_s3_file_to_temp(s3_resource, bucket, key):
     suffix = os.path.splitext(key)[1] or ".tmp"
