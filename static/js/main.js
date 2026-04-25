@@ -1,4 +1,9 @@
 
+if (!sessionStorage.getItem('session_id')) {
+    sessionStorage.setItem('session_id', crypto.randomUUID());
+}
+const sessionId = sessionStorage.getItem('session_id');
+
 const messageSendButton = document.querySelector(".vb .vb-footer button.vb-send");
 const inputBar = document.querySelector(".vb .vb-footer input.vb-input");
 const messageWindow = document.querySelector(".vb-messages")
@@ -61,7 +66,7 @@ async function sendMessage(){
             headers: {
                 "Content-Type": "application/json"
             },
-            body: JSON.stringify({message: input})
+            body: JSON.stringify({message: input, session_id: sessionId})
         });
         const data = await res.json();
 

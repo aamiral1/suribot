@@ -131,6 +131,15 @@ class Database:
                     ON document_chunks(doc_id);
                 CREATE INDEX IF NOT EXISTS idx_doc_chunks_chunk
                     ON document_chunks(doc_id, chunk_id);
+
+                CREATE TABLE IF NOT EXISTS conversation_messages (
+                    id SERIAL PRIMARY KEY,
+                    session_id TEXT NOT NULL,
+                    role TEXT NOT NULL CHECK (role IN ('user', 'assistant')),
+                    message TEXT NOT NULL,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                );
+                
             """
 
             cursor.execute(create_table_command)
@@ -143,6 +152,67 @@ class Database:
         finally:
             cursor.close()
             self._put_conn(connection)
+
+# records a message interaction
+    def save_message(self, session_id, role, content):
+        connection = self._get_conn()
+        cursor = connection.cursor()
+
+        command = f"""
+        INSERT INTO conversation_messages (session_id, role, message)
+        VALUES (%s, %s, %s)
+        """
+
+        try:
+            cursor.execute(
+                command,
+                (
+                    session_id,
+                    role,
+                    content
+                )
+            )
+
+            connection.commit()
+
+        except Exception as e:
+            connection.rollback()
+            raise Exception(f"Error: {e}")
+        finally:
+            cursor.close()
+            self._put_conn(connection)
+
+# get conversation history for a particular session_id
+    def get_conversation_history(self, session_id, limit=10):
+        connection = self._get_conn()
+        cursor = connection.cursor()
+
+        query = """
+        SELECT role, message
+        FROM conversation_messages
+        WHERE session_id = %s
+        ORDER BY created_at DESC
+        LIMIT %s
+        """
+
+        rows = []  
+
+        try:
+            cursor.execute(query, (session_id, limit))
+            rows = cursor.fetchall()
+
+        except Exception as e:
+            raise Exception(f"Error fetching conversation history: {e}")
+
+        finally:
+            cursor.close()
+            self._put_conn(connection)
+
+        # reverse so oldest → newest
+        return [
+            {"role": row[0], "content": row[1]}
+            for row in reversed(rows)
+        ]
 
 # creates record for a document with CREATED as initial value
     def create(self, source_type, name, size, type, upload_date, s3_file_bucket, s3_file_key, s3_extracted_text_bucket, s3_extracted_text_key, doc_type="knowledge_base", doc_structure="free_flow"):

@@ -177,6 +177,7 @@ def home():
 # REST API for backend
 chatbot_args = reqparse.RequestParser()
 chatbot_args.add_argument("message", type=str, help="Message for LLM", required=True)
+chatbot_args.add_argument("session_id", type=str, required=False)
 
 
 # API that handles communication with Open AI
@@ -184,6 +185,7 @@ class ChatbotAPI(Resource):
     def post(self):
         args = chatbot_args.parse_args()
         user_message = args["message"]
+        session_id = args["session_id"]
 
         messages = []
 
@@ -292,8 +294,11 @@ class ChatbotAPI(Resource):
 
         messages.append({"role": "system", "content": SYSTEM_PROMPT})
 
-        # if system_prompt_cache:
-        #     messages.append({"role": "system", "content": system_prompt_cache})
+        # Retrieve conversation history
+        if session_id:
+            history = db.get_conversation_history(session_id)
+            for msg in history:
+                messages.append(msg)
 
         # Retrieve relevant chunks from the knowledge base
         context_block = ""
@@ -334,13 +339,23 @@ class ChatbotAPI(Resource):
                 }
             )
 
+        # add latest user messsage
         messages.append({"role": "user", "content": user_message})
 
+        if session_id:
+            db.save_message(session_id, "user", user_message)
+
+        # send final message to LLM to generate response
         response = client.chat.completions.create(
             model="gpt-5.4-mini", messages=messages
         )
 
-        return {"response": response.choices[0].message.content}, 200
+        assistant_response = response.choices[0].message.content
+
+        if session_id:
+            db.save_message(session_id, "assistant", assistant_response)
+
+        return {"response": assistant_response}, 200
 
 
 api.add_resource(ChatbotAPI, "/api")
