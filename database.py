@@ -1,9 +1,11 @@
+import json
+
 import psycopg2 as pg2
 from psycopg2.pool import ThreadedConnectionPool
 import uuid
 from enums import DocumentStatus
 import custom_exceptions as ex
-
+from sales_controller import SalesController
 
 class Database:
     def __init__(self, database_path, doc_table_name):
@@ -137,7 +139,14 @@ class Database:
                     session_id TEXT NOT NULL,
                     role TEXT NOT NULL CHECK (role IN ('user', 'assistant')),
                     message TEXT NOT NULL,
+                    used_action TEXT,
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                );
+
+                CREATE TABLE IF NOT EXISTS lead_profiles (
+                    session_id TEXT PRIMARY KEY,
+                    profile JSONB NOT NULL DEFAULT '{{}}',
+                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                 );
                 
             """
@@ -154,13 +163,13 @@ class Database:
             self._put_conn(connection)
 
 # records a message interaction
-    def save_message(self, session_id, role, content):
+    def save_message(self, session_id, role, content, used_action=None):
         connection = self._get_conn()
         cursor = connection.cursor()
 
         command = f"""
-        INSERT INTO conversation_messages (session_id, role, message)
-        VALUES (%s, %s, %s)
+        INSERT INTO conversation_messages (session_id, role, message, used_action)
+        VALUES (%s, %s, %s, %s)
         """
 
         try:
@@ -169,7 +178,8 @@ class Database:
                 (
                     session_id,
                     role,
-                    content
+                    content,
+                    used_action
                 )
             )
 
@@ -213,6 +223,108 @@ class Database:
             {"role": row[0], "content": row[1]}
             for row in reversed(rows)
         ]
+
+# returns total number of assistant turns for a session (used for sales_turn threshold)
+    def get_sales_turn_count(self, session_id):
+        connection = self._get_conn()
+        cursor = connection.cursor()
+
+        query = """
+        SELECT COUNT(*) FROM conversation_messages
+        WHERE session_id = %s AND role = 'assistant'
+        """
+
+        try:
+            cursor.execute(query, (session_id,))
+            row = cursor.fetchone()
+            return row[0] if row else 0
+        except Exception as e:
+            raise Exception(f"Error fetching sales turn count: {e}")
+        finally:
+            cursor.close()
+            self._put_conn(connection)
+
+# gets last used actions for a particular session_id
+    def get_last_actions(self, session_id, limit=3):
+        connection = self._get_conn()
+        cursor = connection.cursor()
+
+        query = """
+        SELECT used_action
+        FROM conversation_messages
+        WHERE session_id = %s
+        AND role = 'assistant'
+        AND used_action IS NOT NULL
+        ORDER BY created_at DESC
+        LIMIT %s
+        """
+
+        try:
+            cursor.execute(query, (session_id, limit))
+            rows = cursor.fetchall()
+        except Exception as e:
+            raise Exception(f"Error fetching used actions: {e}")
+        finally:
+            cursor.close()
+            self._put_conn(connection)
+
+        return [row[0] for row in rows]
+
+
+# retrieves a lead profile for a particular session_id
+    def get_lead_profile(self, session_id):
+        connection = self._get_conn()
+        cursor = connection.cursor()
+
+        query = f"""
+            SELECT profile FROM lead_profiles
+            WHERE session_id=%s
+        """
+
+        try:
+            cursor.execute(query, (session_id,))
+            row = cursor.fetchone()
+
+            schema = SalesController.create_new_profile()
+
+            if not row:
+                return schema
+
+            profile = row[0]
+            return {k: profile.get(k, v) for k, v in schema.items()}
+            
+        except Exception as e:
+            raise Exception(f"Error fetching lead profile: {e}")
+
+        finally:
+            cursor.close()
+            self._put_conn(connection)
+
+# saves a lead profile
+    def save_lead_profile(self, session_id, profile):
+        connection = self._get_conn()
+        cursor = connection.cursor()
+
+        query = """
+        INSERT INTO lead_profiles (session_id, profile)
+        VALUES (%s, %s)
+        ON CONFLICT (session_id)
+        DO UPDATE SET
+            profile = EXCLUDED.profile,
+            updated_at = CURRENT_TIMESTAMP
+        """
+
+        try:
+            cursor.execute(query, (session_id, json.dumps(profile)))
+            connection.commit()
+
+        except Exception as e:
+            connection.rollback()
+            raise Exception(f"Error saving lead profile: {e}")
+
+        finally:
+            cursor.close()
+            self._put_conn(connection)
 
 # creates record for a document with CREATED as initial value
     def create(self, source_type, name, size, type, upload_date, s3_file_bucket, s3_file_key, s3_extracted_text_bucket, s3_extracted_text_key, doc_type="knowledge_base", doc_structure="free_flow"):
@@ -494,25 +606,6 @@ class Database:
             if not row:
                 raise ex.InvalidDocumentID("No document available")
             return row[0]
-        except Exception as e:
-            connection.rollback()
-            raise Exception(f"Error: {e}")
-        finally:
-            cursor.close()
-            self._put_conn(connection)
-
-    # returns (s3_extracted_text_bucket, s3_extracted_text_key) for all system prompt docs in KB
-    def get_system_prompt_docs(self):
-        connection = self._get_conn()
-        cursor = connection.cursor()
-
-        command = f"""SELECT s3_extracted_text_bucket, s3_extracted_text_key
-                      FROM {self.doc_table}
-                      WHERE doc_type = 'system_prompt' AND in_kb = TRUE"""
-
-        try:
-            cursor.execute(command)
-            return cursor.fetchall()
         except Exception as e:
             connection.rollback()
             raise Exception(f"Error: {e}")

@@ -1,3 +1,5 @@
+import json
+
 from flask import Flask, render_template, jsonify, request
 from flask_restful import Api, Resource, reqparse
 from flask_wtf import FlaskForm
@@ -11,8 +13,10 @@ from chunker import chunk_text, chunk_text_recursive, chunk_text_fixed
 from config import ChunkingStrategy, get_chunking_strategy, get_retrieval_alpha
 from embedder import embed_chunks
 from pinecone_store import get_or_create_index, upsert_chunks, hybrid_query, query_index
-from structured_chunker import split_into_sections, chunk_sections_with_fallback
 from hybrid_retriever import hybrid_retrieve
+from structured_chunker import split_into_sections, chunk_sections_with_fallback
+from sales_controller import SalesController
+from response_generator import generate_final_response, retrieve_relevant_chunks, book_appointment
 from crawler import crawl_url
 from web_chunker import clean_markdown, markdown_to_sections, detect_dominant_level
 import bm25_encoder as bm25_enc
@@ -30,166 +34,7 @@ from urllib.parse import urlparse
 
 load_dotenv()
 
-SYSTEM_PROMPT_TRANSFORM_PROMPT = """You are a system prompt transformation engine.
-
-Your task is to convert any uploaded system prompt document into a clean, structured, and production-ready system prompt for an LLM or chatbot.
-
-----------------------------------------
-CORE OBJECTIVE
-----------------------------------------
-
-- Preserve the original meaning, intent, and details as accurately as possible
-- Improve structure, clarity, and usability for an LLM
-- Do NOT introduce new information, assumptions, or capabilities
-
-----------------------------------------
-INPUT CHARACTERISTICS
-----------------------------------------
-
-The uploaded document may contain:
-- Instructions
-- Notes or drafts
-- Business logic
-- Service descriptions
-- Policies or constraints
-- Conversation examples
-- Unstructured or messy content
-
-You must handle all formats adaptively.
-
-----------------------------------------
-TRANSFORMATION RULES
-----------------------------------------
-
-1. Extract only meaningful instructional content
-2. Preserve all important details exactly where possible (facts, rules, constraints, workflows)
-3. Remove:
-   - Redundancy
-   - Repetition
-   - Filler or informal notes
-4. Rewrite unclear or messy phrasing into precise, directive instructions
-5. Infer structure ONLY (not content) where needed to improve clarity
-
-----------------------------------------
-STRICT CONSTRAINTS
-----------------------------------------
-
-- Do NOT hallucinate missing information
-- Do NOT invent services, rules, or capabilities
-- Do NOT generalise beyond what is stated
-- Do NOT change meaning, even if the wording is improved
-- Do NOT omit important constraints or edge cases
-- If something is ambiguous, keep it as-is but clarify wording without adding meaning
-
-----------------------------------------
-OUTPUT STRUCTURE
-----------------------------------------
-
-Produce ONE final system prompt with clear sections such as:
-
-- Role / Identity
-- Objectives / Responsibilities
-- Knowledge / Domain (if present)
-- Processes / Workflows (if present)
-- Behaviour / Communication Style (if present)
-- Rules / Constraints / Guardrails
-- Task-specific instructions (if present)
-
-Only include sections that are supported by the input document.
-
-----------------------------------------
-STYLE GUIDELINES
-----------------------------------------
-
-- Use clear, directive language suitable for LLM execution
-- Keep wording concise and precise
-- Avoid conversational or explanatory tone
-- Write in a way that can be directly pasted into a system prompt field
-
-----------------------------------------
-OUTPUT RULES
-----------------------------------------
-
-- Output ONLY the final transformed system prompt
-- Do NOT include explanations, commentary, or analysis
-- Do NOT reference the source document
-- Do NOT include placeholders unless they exist in the original
-
-----------------------------------------
-FAIL-SAFE BEHAVIOUR
-----------------------------------------
-
-If the document is:
-- Incomplete → preserve what exists without filling gaps
-- Messy → organise it without adding meaning
-- Repetitive → deduplicate while preserving all unique information
-
-Your goal is fidelity first, structure second, improvement third."""
-
-app = Flask(__name__)
-app.config["SECRET_KEY"] = "supersecretkey"
-app.config["UPLOAD_FOLDER"] = "static/files"
-app.config["OCR_PROCESSING_FOLDER"] = "static/ocr"
-app.config["EXTRACTED_TEXT_FOLDER"] = "static/extracted_text"
-api = Api(app)
-
-client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"), timeout=20)
-
-response = client
-
-# Initialise Postgres Database
-db = Database("document_database.db", "documents")
-db.init_schema()
-
-# In-memory system prompt cache — rebuilt on startup and after each system prompt doc is added to KB
-system_prompt_cache = ""
-
-# Retrieval alpha — read from RETRIEVAL_STRATEGY in .env (hybrid=0.5, dense=1.0, sparse=0.0)
-retrieval_alpha = get_retrieval_alpha()
-
-
-def _rebuild_system_prompt_cache():
-    global system_prompt_cache
-    parts = []
-    for s3_bucket, s3_key in db.get_system_prompt_docs():
-        parts.append(_get_file_text(s3, s3_bucket, s3_key))
-    system_prompt_cache = "\n\n".join(parts).strip()
-    print(f"[Cache] System prompt cache rebuilt ({len(system_prompt_cache)} chars).")
-    print(system_prompt_cache)
-
-
-# Initialise AWS S3 Client
-s3 = boto3.resource(
-    service_name="s3",
-    region_name="eu-north-1",
-    aws_access_key_id=os.getenv("AWS_ACCESS_KEY_ID"),
-    aws_secret_access_key=os.getenv("AWS_SECRET_ACCESS_KEY"),
-)
-
-bucket_name = os.getenv("AWS_S3_BUCKET")
-
-
-@app.route("/")
-def home():
-    return render_template("index.html")
-
-
-# REST API for backend
-chatbot_args = reqparse.RequestParser()
-chatbot_args.add_argument("message", type=str, help="Message for LLM", required=True)
-chatbot_args.add_argument("session_id", type=str, required=False)
-
-
-# API that handles communication with Open AI
-class ChatbotAPI(Resource):
-    def post(self):
-        args = chatbot_args.parse_args()
-        user_message = args["message"]
-        session_id = args["session_id"]
-
-        messages = []
-
-        SYSTEM_PROMPT = """
+SYSTEM_PROMPT = """
         You are the Customer Support and Sales Assistant for Suri Marketing - a social media marketing agency. You sound like a warm, switched-on member of the team — friendly, casual, confident. Never robotic, never salesy.
 
         ## Scope
@@ -267,95 +112,119 @@ class ChatbotAPI(Resource):
         - “Happy to show you exactly how this would work for your business on a call”
 
         - You are representing a real company, so responses should feel grounded, confident, and aligned with a real service offering — not hypothetical
-
-        ## Examples of good style
-
-        User: What services do you offer?  
-        You: We do social media content across Instagram, TikTok, and Facebook — strategy, filming guidance, editing, captions, scheduling, the lot. Two packages depending on how much content you want each month (10 or 14 videos), both run on a 4-month minimum. Want the pricing?
-
-        User: How much does it cost?  
-        You: £995/month for 10 videos, £1195/month for 14. Both cover everything — strategy, editing, captions, posting. Pay upfront and it drops £100/month either way.
-
-        User: What's the difference between Package A and B?  
-        You: Honestly just volume. A is 10 videos every 4 weeks, B is 14. Same strategy, same platforms, same everything else. B makes sense if you want to post most days; A's plenty if you're building steadily.
-
-        User: Why is the minimum 4 months?  
-        You: Social takes a bit to get going. First month or two is mostly building content and letting the algorithm work out who to show you to. Four months gives us room to actually move the needle — most people see things click around month two or three.
-
-        User: Do you do Google Ads?  
-        You: Nah, we don't do paid ads — we're organic-only across Instagram, TikTok, and Facebook. If content on those is what you're after though, happy to tell you more.
-
-        User: Can you write me a caption for my post about coffee?  
-        You: Caption-writing's part of what we do for clients, not really a one-off thing. Want to hear how the content side works?
-
-        User: What's your refund policy?  
-        You: Don't have that one to hand — probably easier to run through it on a quick call if you want.
         """
 
-        messages.append({"role": "system", "content": SYSTEM_PROMPT})
+app = Flask(__name__)
+app.config["SECRET_KEY"] = "supersecretkey"
+app.config["UPLOAD_FOLDER"] = "static/files"
+app.config["OCR_PROCESSING_FOLDER"] = "static/ocr"
+app.config["EXTRACTED_TEXT_FOLDER"] = "static/extracted_text"
+api = Api(app)
 
-        # Retrieve conversation history
-        if session_id:
-            history = db.get_conversation_history(session_id)
-            for msg in history:
-                messages.append(msg)
+client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"), timeout=20)
+sales_controller = SalesController(client=client)
 
-        # Retrieve relevant chunks from the knowledge base
-        context_block = ""
-        try:
-            from pinecone import Pinecone
+response = client
 
-            pc = Pinecone(api_key=os.getenv("PINECONE_API_KEY"))
-            index_name = os.getenv("PINECONE_INDEX_NAME")
-            if index_name in [i.name for i in pc.list_indexes()]:
-                pinecone_index = pc.Index(index_name)
-                retrieved = hybrid_retrieve(
-                    query=user_message,
-                    client=client,
-                    pinecone_index=pinecone_index,
-                    top_k=8,
-                    alpha=retrieval_alpha,
-                )
-                if retrieved:
-                    print(
-                        f"\n[/api] Retrieved {len(retrieved)} chunk(s) for query: '{user_message}'"
-                    )
-                    for i, r in enumerate(retrieved, 1):
-                        print(f"  [{i}] {r['text']}")
-                    context_block = "\n\n---\n\n".join(r["text"] for r in retrieved)
-        except Exception as e:
-            print(f"[ChatbotAPI] RAG retrieval failed, continuing without context: {e}")
+# Initialise Postgres Database
+db = Database("document_database.db", "documents")
+db.init_schema()
 
-        if context_block:
-            messages.append(
-                {
-                    "role": "system",
-                    "content": (
-                        "Relevant information for the user's current question "
-                        "(use this as your source of truth, but rephrase naturally — "
-                        "do not paste it verbatim):\n\n"
-                        f"{context_block}"
-                    ),
-                }
-            )
+# Retrieval alpha — read from RETRIEVAL_STRATEGY in .env (hybrid=0.5, dense=1.0, sparse=0.0)
+retrieval_alpha = get_retrieval_alpha()
 
-        # add latest user messsage
-        messages.append({"role": "user", "content": user_message})
 
-        if session_id:
-            db.save_message(session_id, "user", user_message)
+# Initialise AWS S3 Client
+s3 = boto3.resource(
+    service_name="s3",
+    region_name="eu-north-1",
+    aws_access_key_id=os.getenv("AWS_ACCESS_KEY_ID"),
+    aws_secret_access_key=os.getenv("AWS_SECRET_ACCESS_KEY"),
+)
 
-        # send final message to LLM to generate response
-        response = client.chat.completions.create(
-            model="gpt-5.4-mini", messages=messages
+bucket_name = os.getenv("AWS_S3_BUCKET")
+
+
+@app.route("/")
+def home():
+    return render_template("index.html")
+
+
+# REST API for backend
+chatbot_args = reqparse.RequestParser()
+chatbot_args.add_argument("message", type=str, help="Message for LLM", required=True)
+chatbot_args.add_argument("session_id", type=str, required=False)
+
+
+# API that handles communication with Open AI
+class ChatbotAPI(Resource):
+    def post(self):
+        args = chatbot_args.parse_args()
+        user_message = args["message"]
+        session_id = args["session_id"]
+
+        # Retrieve Information
+        history = db.get_conversation_history(session_id, limit=10)
+        lead_profile = db.get_lead_profile(session_id)
+        last_actions = db.get_last_actions(session_id, limit=3)
+
+        sales_turn = db.get_sales_turn_count(session_id)
+        print(f"[DEBUG] session_id={session_id!r}  sales_turn={sales_turn!r}")
+
+        # Invoke Controller's output
+        controller_output = sales_controller.run_controller(
+            user_message=user_message,
+            history=history,
+            lead_profile=lead_profile,
+            last_actions=last_actions,
+            sales_turn=sales_turn
         )
 
-        assistant_response = response.choices[0].message.content
+        # apply guardrails to controller output
+        controller_output = sales_controller.apply_guardrails(
+            controller_output=controller_output,
+            lead_profile=lead_profile,
+            sales_turn=sales_turn
+        )
 
-        if session_id:
-            db.save_message(session_id, "assistant", assistant_response)
+        # extract parameter from controller output
+        next_action = controller_output["next_action"]
+        controller_reason = controller_output.get("reason", "")
 
-        return {"response": assistant_response}, 200
+        # Update lead profile
+        lead_profile = sales_controller.merge_profile(
+            lead_profile,
+            controller_output.get("lead_profile_updates", {})
+        )
+
+        rag_context = ""
+
+        if controller_output.get("requires_rag"):
+            rag_context = retrieve_relevant_chunks(client, user_message, retrieval_alpha)
+
+        booking_result = None
+
+        if controller_output.get("requires_booking_tool"):
+            booking_result = book_appointment(lead_profile)
+
+        # 6. Generate final customer-facing reply
+        assistant_reply = generate_final_response(
+            client=client,
+            user_message=user_message,
+            history=history,
+            lead_profile=lead_profile,
+            next_action=next_action,
+            controller_reason=controller_reason,
+            rag_context=rag_context,
+            booking_result=booking_result
+        )
+
+        # 7. Save everything
+        db.save_message(session_id, "user", user_message)
+        db.save_message(session_id, "assistant", assistant_reply, used_action=next_action)
+        db.save_lead_profile(session_id, lead_profile)
+
+        return {"response": assistant_reply}, 200
 
 
 api.add_resource(ChatbotAPI, "/api")
@@ -483,10 +352,7 @@ def get_documents():
 def add_to_kb(doc_id):
     doc_type = db.get_doc_type(doc_id)
     db.set_kb_status(doc_id, "processing")
-    if doc_type == "system_prompt":
-        threading.Thread(target=_system_prompt_job, args=(doc_id,)).start()
-    else:
-        threading.Thread(target=_chunk_and_embed_job, args=(doc_id,)).start()
+    threading.Thread(target=_chunk_and_embed_job, args=(doc_id,)).start()
     return jsonify({"status": "processing"}), 200
 
 
@@ -494,42 +360,6 @@ def add_to_kb(doc_id):
 def get_kb_status(doc_id):
     kb_status = db.get_kb_status(doc_id)
     return jsonify({"kb_status": kb_status}), 200
-
-
-def _system_prompt_job(doc_id):
-    print(f"\n[KB] Starting system prompt job for doc: {doc_id}")
-    try:
-        # fetch extracted text from S3
-        s3_bucket, s3_key = db.get_extracted_text_file_path(doc_id)
-        extracted_text = _get_file_text(s3, s3_bucket, s3_key)
-
-        # transform into structured system prompt via LLM
-        print(f"[KB] Transforming system prompt doc ({len(extracted_text)} chars)...")
-        response = client.chat.completions.create(
-            model="gpt-4o-mini",
-            messages=[
-                {"role": "system", "content": SYSTEM_PROMPT_TRANSFORM_PROMPT},
-                {"role": "user", "content": extracted_text},
-            ],
-        )
-        transformed = response.choices[0].message.content.strip()
-        print(f"[KB] Transformation complete ({len(transformed)} chars).")
-
-        # overwrite S3 extracted text file with transformed version
-        s3.meta.client.put_object(
-            Bucket=s3_bucket,
-            Key=s3_key,
-            Body=transformed.encode("utf-8"),
-            ContentType="text/plain",
-        )
-
-        db.set_in_kb(doc_id)
-        db.set_kb_status(doc_id, "success")
-        _rebuild_system_prompt_cache()
-        print(f"[KB] System prompt doc {doc_id} marked as in_kb=TRUE.")
-    except Exception as e:
-        print(f"[KB] Error during system prompt job: {e}")
-        db.set_kb_status(doc_id, "failed")
 
 
 def _chunk_and_embed_job(doc_id):
@@ -1131,9 +961,6 @@ def _download_s3_file_to_temp(s3_resource, bucket, key):
     s3_resource.meta.client.download_file(bucket, key, tmp_path)
     return tmp_path
 
-
-# Build system prompt cache from any system prompt docs already in KB
-_rebuild_system_prompt_cache()
 
 # Load BM25 encoder from S3 if available; otherwise fit from existing chunks
 _loaded_encoder = bm25_enc.load_from_s3(s3, bucket_name)
