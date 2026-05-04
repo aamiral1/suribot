@@ -1,5 +1,9 @@
 import json
 import re
+from datetime import datetime
+from zoneinfo import ZoneInfo
+
+_EMAIL_RE = re.compile(r'^[^@\s]+@[^@\s]+\.[^@\s]+$')
 
 class SalesController:
     # Actions that the Sales Controller is allowed to choose from
@@ -14,11 +18,11 @@ class SalesController:
         "HANDLE_OBJECTION",
         "HANDLE_COMPARISON",
         "HANDLE_REJECTION",
-        "OFFER_BOOKING",
-        "COLLECT_CONTACT",
+        "OFFER_AND_COLLECT",
         "OFFER_AVAILABLE_SLOTS",
         "BOOK_APPOINTMENT",
         "CONFIRM_BOOKING",
+        "RESCHEDULE_APPOINTMENT",
         "REDIRECT_OFF_TOPIC",
         "END_CONVERSATION_POLITELY",
         "CONTINUE_HELPFULLY",
@@ -37,8 +41,12 @@ class SalesController:
         "objection": None,
         "booking_offered": False,
         "booking_completed": False,
+        "contact_name": None,
         "contact_email": None,
         "contact_phone": None,
+        "requested_day": None,
+        "requested_time_from": None,
+        "requested_time_to": None,
     }
 
     RAG_ACTIONS = {
@@ -52,6 +60,7 @@ class SalesController:
         "OFFER_AVAILABLE_SLOTS",
         "BOOK_APPOINTMENT",
         "CONFIRM_BOOKING",
+        "RESCHEDULE_APPOINTMENT",
     }
 
     CONTROLLER_PROMPT = """
@@ -84,11 +93,11 @@ class SalesController:
         - HANDLE_OBJECTION: Respond to concerns about price, trust, contracts, refunds, or results.
         - HANDLE_COMPARISON: Explain how Suri differs from alternatives like freelancers or other agencies.
         - HANDLE_REJECTION: Respond calmly to hesitation or rejection such as “no” or “not now”.
-        - OFFER_BOOKING: Suggest a discovery call as the next step.
-        - COLLECT_CONTACT: Ask for missing contact details such as email or phone number.
-        - OFFER_AVAILABLE_SLOTS: Provide booking options such as times or a booking link.
-        - BOOK_APPOINTMENT: Use the booking tool when enough information is available to create a booking.
-        - CONFIRM_BOOKING: Confirm that a booking has been made or details have been shared.
+        - OFFER_AND_COLLECT: Suggest a discovery call AND ask for the user's name and email in the same response. Do not first ask if they want to book — go straight to collecting their details naturally. Use this whenever it is appropriate to offer a booking.
+        - OFFER_AVAILABLE_SLOTS: Use the booking tool to fetch and present available time slots. Use this after contact details are collected, or when the user asks about available times.
+        - BOOK_APPOINTMENT: Use the booking tool to create the calendar event. Only when contact details and a specific time slot are both known.
+        - CONFIRM_BOOKING: Confirm that a booking has already been made in this session. Only chosen after BOOK_APPOINTMENT succeeded in a previous turn.
+        - RESCHEDULE_APPOINTMENT: Use the booking tool to move an existing booking to a new time. Only when the user has selected a new slot AND has provided an email for identity verification.
         - REDIRECT_OFF_TOPIC: Politely steer the conversation back if the user asks something unrelated.
         - END_CONVERSATION_POLITELY: Close the conversation in a friendly and respectful way.
         - CONTINUE_HELPFULLY: Continue the conversation naturally without changing direction.
@@ -110,34 +119,39 @@ class SalesController:
         - objection
         - booking_offered
         - booking_completed
+        - contact_name
         - contact_email
         - contact_phone
 
         Rules:
         1. If the user asks about pricing, packages, services, process, contracts, refunds, guarantees, results, or comparisons, set requires_rag = true.
-        2. If the user explicitly asks to speak with the team, book a call, arrange a meeting, or have someone contact them:
-            - choose COLLECT_CONTACT if email/phone is missing.
-            - choose OFFER_AVAILABLE_SLOTS if contact details are already known but no time/slot has been chosen.
-            - choose BOOK_APPOINTMENT only if contact details and a preferred time/slot are both available.
-        3. If the user provides contact details:
-            - update contact_email and/or contact_phone.
-            - choose OFFER_AVAILABLE_SLOTS if no preferred time/slot is known.
-            - choose BOOK_APPOINTMENT only if a preferred time/slot is also known.
-        4. Do not choose BOOK_APPOINTMENT unless the system has enough information to create a booking.
-        Minimum booking information:
-            - contact_email or contact_phone
-            - preferred time/slot or selected booking option
-        5. If the user raises a concern, choose HANDLE_OBJECTION.
-        6. If the user compares Suri with alternatives, choose HANDLE_COMPARISON.
-        7. If the user rejects or hesitates, choose HANDLE_REJECTION.
-        8. If the user asks unrelated things, choose REDIRECT_OFF_TOPIC.
-        9. If the user seems interested but the system is unsure, choose OFFER_BOOKING.
+        2. When it is appropriate to offer a booking, choose OFFER_AND_COLLECT — ask for name and email in the same response. Do not ask "would you like to book?" first.
+        3. If the user provides contact details after OFFER_AND_COLLECT:
+            - Update contact_name, contact_email, and/or contact_phone in lead_profile_updates.
+            - Only choose OFFER_AVAILABLE_SLOTS or BOOK_APPOINTMENT once BOTH contact_name AND contact_email are known (either from this message or already in the lead profile). If either is still missing, stay on OFFER_AND_COLLECT and ask for the missing field.
+        4. If the user directly asks for a call, or signals that they want a call - Directly OFFER_AND_COLLECT.
+        4. If the user directly asks to book at a specific time (e.g. "book me for Tuesday 3pm") and contact details are known, choose BOOK_APPOINTMENT directly — no need for OFFER_AND_COLLECT first.
+        5. Do not choose BOOK_APPOINTMENT unless ALL THREE are known: (a) contact_name, (b) contact_email, AND (c) selected_slot.
+        6. If the user raises a concern, choose HANDLE_OBJECTION.
+        7. If the user compares Suri with alternatives, choose HANDLE_COMPARISON.
+        8. If the user rejects or hesitates after OFFER_AND_COLLECT or at any point, choose HANDLE_REJECTION.
+        9. If the user asks unrelated things, choose REDIRECT_OFF_TOPIC.
         10. If unclear and not sales-related, choose ASK_CLARIFYING_QUESTION.
         11. Do not ask endless questions.
-        12. If business_type and either main_goal or main_problem are known, the user is qualified enough to offer booking.
+        12. If business_type and either main_goal or main_problem are known, the user is qualified enough to offer a booking.
         13. Only update lead profile fields when clearly supported by the conversation.
         14. Do not invent values.
         15. Return only valid JSON.
+        16. When the user selects a specific slot, set selected_slot_day to the day name exactly as it appears in the Upcoming days table (e.g. "thursday") and selected_slot_time to HH:MM in 24-hour format (e.g. "09:00", "13:00"). Do NOT produce ISO datetimes.
+        17. BOOK_APPOINTMENT and RESCHEDULE_APPOINTMENT MUST populate both selected_slot_day AND selected_slot_time. If either is unknown, do not choose those actions.
+        18. When the user expresses a day preference (e.g. "Thursday", "next Monday"), set requested_day to that day name in lowercase (e.g. "thursday", "next monday"). When they express a time-of-day preference, set requested_time_from to HH:MM (e.g. "12:00") and requested_time_to to HH:MM or null to mean end of business (17:00).
+        19. When resolving a day name to use in requested_day or selected_slot_day, copy it exactly from the "Upcoming days" table — do NOT do arithmetic. For nearest occurrence use the first match; for "next X" use the second match in the table.
+        20. When the user refines a time within an already-stated day (e.g. "after 12?", "morning only"), update requested_time_from to the stated HH:MM. Do not change requested_day if it is already set.
+        21. If the user says they want to reschedule without naming a new time, choose OFFER_AVAILABLE_SLOTS to show options first.
+        22. CONFIRM_BOOKING is only chosen after BOOK_APPOINTMENT has already succeeded in the current session (booking_completed is True in the lead profile).
+        23. requested_day, requested_time_from, requested_time_to, selected_slot_day, selected_slot_time, and provided_email all default to null when not applicable.
+        24. When the user states an email address in the context of rescheduling, populate provided_email with that email.
+        25. When choosing RESCHEDULE_APPOINTMENT, always re-extract selected_slot_day and selected_slot_time from the most recent slot selection in conversation history, even if the user's current message is just providing their email.
 
         Return JSON exactly like this:
         {
@@ -156,10 +170,17 @@ class SalesController:
             "objection": null,
             "booking_offered": null,
             "booking_completed": null,
+            "contact_name": null,
             "contact_email": null,
             "contact_phone": null
         },
-        "reason": "brief internal reason"
+        "reason": "brief internal reason",
+        "requested_day": null,
+        "requested_time_from": null,
+        "requested_time_to": null,
+        "selected_slot_day": null,
+        "selected_slot_time": null,
+        "provided_email": null
         }
     """
 
@@ -198,12 +219,21 @@ class SalesController:
             if value is None:
                 continue
 
+            # reject malformed emails
+            if key == "contact_email" and not _EMAIL_RE.match(str(value)):
+                continue
+
             profile[key] = value
 
         return self.normalise_profile(profile)
     
-    def run_controller(self, user_message, history, lead_profile, last_actions, sales_turn=0):
+    def run_controller(self, user_message, history, lead_profile, last_actions, sales_turn=0, current_datetime=None, current_date_label=None, day_map=None):
         lead_profile = self.normalise_profile(lead_profile)
+
+        if current_datetime is None:
+            now = datetime.now(ZoneInfo("Europe/London"))
+            current_datetime = now.isoformat()
+            current_date_label = now.strftime("%A %-d %B %Y")
 
         messages = [
             {
@@ -213,6 +243,12 @@ class SalesController:
             {
                 "role": "user",
                 "content": f"""
+                    Current datetime (Europe/London): {current_datetime}
+                    Today is: {current_date_label}
+
+                    Upcoming days — use these exact dates when resolving day names, do not calculate:
+{day_map}
+
                     Conversation history:
                     {json.dumps(history, indent=2)}
 
@@ -271,6 +307,11 @@ class SalesController:
 
         if not isinstance(controller_output.get("reason"), str):
             controller_output["reason"] = ""
+
+        for field in ("requested_day", "requested_time_from", "requested_time_to",
+                      "selected_slot_day", "selected_slot_time", "provided_email"):
+            if not isinstance(controller_output.get(field), (str, type(None))):
+                controller_output[field] = None
         # --- end schema enforcement ---
 
         # enforce valid action — fallback if LLM returns something unexpected
@@ -280,7 +321,7 @@ class SalesController:
 
         # sales turn threshold — force booking offer regardless of controller decision
         if sales_turn >= threshold and not lead_profile.get("booking_offered"):
-            controller_output["next_action"] = "OFFER_BOOKING"
+            controller_output["next_action"] = "OFFER_AND_COLLECT"
             controller_output["reason"] = f"Sales turn threshold ({threshold}) reached — overriding to offer booking"
             controller_output["lead_profile_updates"]["booking_offered"] = True
             controller_output["requires_rag"] = False
@@ -297,6 +338,40 @@ class SalesController:
         #         controller_output["next_action"] = "ASK_CLARIFYING_QUESTION"
         #         controller_output["reason"] = "Low confidence + unqualified lead — asking clarifying question"
 
+        # block slot/booking actions if contact details are incomplete
+        updates = controller_output.get("lead_profile_updates", {})
+        has_name = lead_profile.get("contact_name") or updates.get("contact_name")
+
+        attempted_email = updates.get("contact_email")
+        if lead_profile.get("contact_email"):
+            has_email = True
+            email_rejected = False
+        elif attempted_email and _EMAIL_RE.match(str(attempted_email)):
+            has_email = True
+            email_rejected = False
+        elif attempted_email:
+            has_email = False
+            email_rejected = True
+        else:
+            has_email = False
+            email_rejected = False
+
+        controller_output["email_rejected"] = email_rejected
+
+        if controller_output["next_action"] in {"OFFER_AVAILABLE_SLOTS", "BOOK_APPOINTMENT"} and not (has_name and has_email):
+            controller_output["next_action"] = "OFFER_AND_COLLECT"
+            controller_output["reason"] = "Missing name or email — collecting both before proceeding to booking"
+            controller_output["requires_booking_tool"] = False
+            controller_output["requires_rag"] = False
+            controller_output["lead_profile_updates"]["booking_offered"] = True
+            return controller_output
+
+        # ensure booking actions have a resolvable slot
+        if controller_output["next_action"] in {"BOOK_APPOINTMENT", "RESCHEDULE_APPOINTMENT"}:
+            if not (controller_output.get("selected_slot_day") and controller_output.get("selected_slot_time")):
+                controller_output["next_action"] = "OFFER_AVAILABLE_SLOTS"
+                controller_output["reason"] = "Missing selected_slot_day or selected_slot_time — showing available slots"
+
         controller_output["requires_rag"] = (
             controller_output["next_action"] in self.RAG_ACTIONS
             or bool(controller_output.get("requires_rag"))
@@ -309,7 +384,7 @@ class SalesController:
 
         # auto-flip profile flags the controller might forget
         action = controller_output["next_action"]
-        if action == "OFFER_BOOKING":
+        if action == "OFFER_AND_COLLECT":
             controller_output["lead_profile_updates"]["booking_offered"] = True
         if action == "CONFIRM_BOOKING":
             controller_output["lead_profile_updates"]["booking_completed"] = True

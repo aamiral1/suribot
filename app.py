@@ -16,7 +16,9 @@ from pinecone_store import get_or_create_index, upsert_chunks, hybrid_query, que
 from hybrid_retriever import hybrid_retrieve
 from structured_chunker import split_into_sections, chunk_sections_with_fallback
 from sales_controller import SalesController
-from response_generator import generate_final_response, retrieve_relevant_chunks, book_appointment
+from response_generator import generate_final_response, retrieve_relevant_chunks
+from calendar_service import get_available_slots, create_booking, reschedule_booking
+import custom_exceptions as cal_ex
 from crawler import crawl_url
 from web_chunker import clean_markdown, markdown_to_sections, detect_dominant_level
 import bm25_encoder as bm25_enc
@@ -27,7 +29,8 @@ import re
 import threading
 import asyncio
 import custom_exceptions as ex
-import datetime
+from datetime import datetime, timedelta
+from zoneinfo import ZoneInfo
 import os
 import tempfile
 from urllib.parse import urlparse
@@ -150,6 +153,191 @@ def home():
     return render_template("index.html")
 
 
+_LONDON = ZoneInfo("Europe/London")
+_BUSINESS_START = 9   # hour
+_BUSINESS_END = 17    # hour
+
+
+def _build_day_map() -> str:
+    """Plain-English lookup table injected into the controller prompt."""
+    today = datetime.now(_LONDON).date()
+    lines = []
+    for i in range(1, 15):
+        d = today + timedelta(days=i)
+        lines.append(f"  - {d.strftime('%A').lower()}: {d.strftime('%-d %B %Y')}")
+    return "\n".join(lines)
+
+
+def _build_day_lookup() -> dict:
+    """Map of lowercase weekday name → list of upcoming dates (14-day horizon)."""
+    today = datetime.now(_LONDON).date()
+    lookup: dict[str, list] = {}
+    for i in range(1, 15):
+        d = today + timedelta(days=i)
+        name = d.strftime("%A").lower()
+        lookup.setdefault(name, []).append(d)
+    return lookup
+
+
+def _resolve_day(day_name: str, day_lookup: dict):
+    """Resolve a day name ('thursday', 'next monday', 'tomorrow') to a date."""
+    if not day_name:
+        return None
+    day_name = day_name.lower().strip()
+    if day_name == "tomorrow":
+        return datetime.now(_LONDON).date() + timedelta(days=1)
+    is_next = day_name.startswith("next ")
+    base = day_name[5:] if is_next else day_name
+    dates = day_lookup.get(base, [])
+    if not dates:
+        return None
+    return dates[1] if (is_next and len(dates) > 1) else dates[0]
+
+
+def _resolve_booking_window(controller_output: dict, day_lookup: dict, lead_profile: dict) -> tuple:
+    """Build (start_dt, end_dt) from intent fields, falling back to lead profile then 7-day default."""
+    now = datetime.now(_LONDON)
+
+    req_day = controller_output.get("requested_day") or lead_profile.get("requested_day")
+    time_from = controller_output.get("requested_time_from") or lead_profile.get("requested_time_from")
+    time_to = controller_output.get("requested_time_to") or lead_profile.get("requested_time_to")
+
+    if req_day:
+        resolved = _resolve_day(req_day, day_lookup)
+        if resolved:
+            try:
+                if time_from:
+                    h, m = map(int, time_from.split(":"))
+                else:
+                    h, m = _BUSINESS_START, 0
+                start_dt = datetime(resolved.year, resolved.month, resolved.day, h, m, tzinfo=_LONDON)
+
+                if time_to:
+                    h2, m2 = map(int, time_to.split(":"))
+                else:
+                    h2, m2 = _BUSINESS_END, 0
+                end_dt = datetime(resolved.year, resolved.month, resolved.day, h2, m2, tzinfo=_LONDON)
+
+                if end_dt > now:
+                    return start_dt, end_dt
+            except (ValueError, AttributeError):
+                pass
+
+    return now, now + timedelta(days=7)
+
+
+def _resolve_selected_slot(controller_output: dict, day_lookup: dict):
+    """Resolve selected_slot_day + selected_slot_time → ISO string, or None."""
+    day_name = controller_output.get("selected_slot_day")
+    time_str = controller_output.get("selected_slot_time")
+    if not day_name or not time_str:
+        return None
+    resolved = _resolve_day(day_name, day_lookup)
+    if not resolved:
+        return None
+    try:
+        h, m = map(int, time_str.split(":"))
+        slot_dt = datetime(resolved.year, resolved.month, resolved.day, h, m, tzinfo=_LONDON)
+        return slot_dt.isoformat()
+    except (ValueError, AttributeError):
+        return None
+
+
+def _handle_offer_slots(controller_output: dict, day_lookup: dict, lead_profile: dict) -> dict:
+    try:
+        start, end = _resolve_booking_window(controller_output, day_lookup, lead_profile)
+        print(f"[SLOTS] Searching {start.isoformat()} → {end.isoformat()}")
+        slots = get_available_slots(start, end)
+        print(f"[SLOTS] Found: {slots}")
+        if not slots:
+            return {"status": "no_slots_available"}
+        return {"status": "slots_available", "slots": slots}
+    except cal_ex.CalendarAuthError:
+        return {"status": "calendar_unavailable"}
+    except cal_ex.CalendarServiceError as e:
+        print(f"[BOOKING] Calendar service error: {e}")
+        return {"status": "calendar_error"}
+
+
+def _handle_book_appointment(controller_output: dict, day_lookup: dict, lead_profile: dict, session_id: str) -> dict:
+    slot_iso = _resolve_selected_slot(controller_output, day_lookup)
+    if not slot_iso:
+        return {"status": "missing_slot"}
+
+    try:
+        slot_dt = datetime.fromisoformat(slot_iso)
+        if slot_dt <= datetime.now(_LONDON):
+            return {"status": "slot_in_past"}
+    except ValueError:
+        return {"status": "missing_slot"}
+
+    name = lead_profile.get("contact_name") or "Guest"
+    email = lead_profile.get("contact_email") or ""
+
+    try:
+        event_id = create_booking(slot_iso, name, email)
+        db.save_booking(session_id, event_id, slot_iso, name, email)
+        lead_profile["requested_day"] = None
+        lead_profile["requested_time_from"] = None
+        lead_profile["requested_time_to"] = None
+        return {"status": "booked", "event_id": event_id, "slot_iso": slot_iso}
+    except cal_ex.SlotAlreadyTakenError:
+        london = ZoneInfo("Europe/London")
+        now = datetime.now(london)
+        try:
+            slots = get_available_slots(now, now + timedelta(days=7))
+        except cal_ex.CalendarServiceError:
+            slots = []
+        return {"status": "slot_taken", "slots": slots}
+    except cal_ex.CalendarAuthError:
+        return {"status": "calendar_unavailable"}
+    except cal_ex.CalendarServiceError as e:
+        print(f"[BOOKING] Error creating booking: {e}")
+        return {"status": "calendar_error"}
+
+
+def _handle_reschedule(controller_output: dict, day_lookup: dict, lead_profile: dict) -> dict:
+    provided = controller_output.get("provided_email")
+
+    if not provided:
+        # No email yet — show slots so the user can pick a time while we ask for their email
+        start, end = _resolve_booking_window(controller_output, day_lookup, lead_profile)
+        try:
+            slots = get_available_slots(start, end)
+        except cal_ex.CalendarServiceError:
+            slots = []
+        return {"status": "needs_verification", "slots": slots}
+
+    # Look up booking by email — works across sessions
+    existing = db.get_booking_by_email(provided)
+    if not existing:
+        return {"status": "verification_failed"}
+
+    new_slot_iso = _resolve_selected_slot(controller_output, day_lookup)
+    if not new_slot_iso:
+        return {"status": "missing_slot"}
+
+    try:
+        reschedule_booking(existing["event_id"], new_slot_iso)
+        db.update_booking_slot(existing["booking_id"], new_slot_iso)
+        return {"status": "rescheduled", "new_slot_iso": new_slot_iso}
+    except cal_ex.EventNotFoundError:
+        return {"status": "no_existing_booking"}
+    except cal_ex.SlotAlreadyTakenError:
+        london = ZoneInfo("Europe/London")
+        now = datetime.now(london)
+        try:
+            slots = get_available_slots(now, now + timedelta(days=7))
+        except cal_ex.CalendarServiceError:
+            slots = []
+        return {"status": "slot_taken", "slots": slots}
+    except cal_ex.CalendarAuthError:
+        return {"status": "calendar_unavailable"}
+    except cal_ex.CalendarServiceError as e:
+        print(f"[BOOKING] Reschedule error: {e}")
+        return {"status": "calendar_error"}
+
+
 # REST API for backend
 chatbot_args = reqparse.RequestParser()
 chatbot_args.add_argument("message", type=str, help="Message for LLM", required=True)
@@ -172,12 +360,20 @@ class ChatbotAPI(Resource):
         print(f"[DEBUG] session_id={session_id!r}  sales_turn={sales_turn!r}")
 
         # Invoke Controller's output
+        now_london = datetime.now(_LONDON)
+        current_datetime_str = now_london.isoformat()
+        current_date_label = now_london.strftime("%A %-d %B %Y")
+        day_map = _build_day_map()
+        day_lookup = _build_day_lookup()
         controller_output = sales_controller.run_controller(
             user_message=user_message,
             history=history,
             lead_profile=lead_profile,
             last_actions=last_actions,
-            sales_turn=sales_turn
+            sales_turn=sales_turn,
+            current_datetime=current_datetime_str,
+            current_date_label=current_date_label,
+            day_map=day_map
         )
 
         # apply guardrails to controller output
@@ -190,12 +386,20 @@ class ChatbotAPI(Resource):
         # extract parameter from controller output
         next_action = controller_output["next_action"]
         controller_reason = controller_output.get("reason", "")
+        requires_rag = controller_output.get("requires_rag", False)
+        email_rejected = controller_output.get("email_rejected", False)
 
         # Update lead profile
         lead_profile = sales_controller.merge_profile(
             lead_profile,
             controller_output.get("lead_profile_updates", {})
         )
+
+        # Persist day/time preference so follow-up slot requests remember the window
+        for field in ("requested_day", "requested_time_from", "requested_time_to"):
+            val = controller_output.get(field)
+            if val is not None:
+                lead_profile[field] = val
 
         rag_context = ""
 
@@ -205,7 +409,15 @@ class ChatbotAPI(Resource):
         booking_result = None
 
         if controller_output.get("requires_booking_tool"):
-            booking_result = book_appointment(lead_profile)
+            action = next_action
+            if action == "OFFER_AVAILABLE_SLOTS":
+                booking_result = _handle_offer_slots(controller_output, day_lookup, lead_profile)
+            elif action == "BOOK_APPOINTMENT":
+                booking_result = _handle_book_appointment(controller_output, day_lookup, lead_profile, session_id)
+            elif action == "RESCHEDULE_APPOINTMENT":
+                booking_result = _handle_reschedule(controller_output, day_lookup, lead_profile)
+            elif action == "CONFIRM_BOOKING":
+                booking_result = {"status": "confirmed"}
 
         # 6. Generate final customer-facing reply
         assistant_reply = generate_final_response(
@@ -215,8 +427,10 @@ class ChatbotAPI(Resource):
             lead_profile=lead_profile,
             next_action=next_action,
             controller_reason=controller_reason,
+            requires_rag=requires_rag,
             rag_context=rag_context,
-            booking_result=booking_result
+            booking_result=booking_result,
+            email_rejected=email_rejected
         )
 
         # 7. Save everything
@@ -714,7 +928,7 @@ def admin():
             name=file_name,
             size=file_size,
             type=file_type.value,
-            upload_date=datetime.datetime.now(),
+            upload_date=datetime.now(),
             s3_file_bucket=bucket_name,
             s3_file_key=file_name,
             s3_extracted_text_bucket="na",
@@ -897,6 +1111,9 @@ def webpage_status(url_id):
     status = db.get_webpage_status(url_id)
     return jsonify(status)
 
+@app.route("/analytics")
+def analytics():
+    return render_template("analytics.html")
 
 # AWS S3 Helper Functions
 def _file_exists(resource, bucket, key):

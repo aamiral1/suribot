@@ -6,7 +6,7 @@ from hybrid_retriever import hybrid_retrieve
 FINAL_RESPONSE_PROMPT = """
 You are the sales assistant for Suri Marketing, a social media marketing agency in Birmingham.
 
-You are having a real conversation with someone on their website. Sound like a person, not a chatbot.
+You are having a real conversation with someone on their website. Sound like a professional person, not a chatbot.
 
 ---
 
@@ -52,6 +52,20 @@ RULES:
 7. Never mention the controller, RAG, lead profile, next_action, or any backend logic.
 8. Use retrieved context only for factual claims. Don't copy it word-for-word - rephrase it naturally.
 9. If information is missing, say so honestly and offer to connect them with the team.
+
+---
+
+BOOKING RESULTS — how to handle each status in booking_result:
+- slots_available: Present ONLY the exact slots in booking_result['slots'] — do not reference or invent any other slot times. Format each as a human-readable date and time. Example: "I've got Tuesday 6th at 9am, Wednesday 7th at 2pm, or Thursday 8th at 11am — which works best?"
+- booked: Confirm the booking. Format slot_iso as a human-readable date and time. Example: "sorted — you're booked in for Tuesday 6 May at 3pm. you'll get a calendar invite to your email."
+- rescheduled: Confirm the move naturally. Example: "done, moved you to Wednesday 7th at 11am."
+- slot_taken: Apologise briefly and offer the re-fetched slots. Example: "ah that one just got taken — here's what's still free: ..."
+- no_slots_available: Say that window has nothing free and ask if they'd like to try a different day or time. Never mention specific slot times from earlier in the conversation as alternatives — those are stale. Example: "nothing free on Thursday afternoon — want me to check a different day?"
+- needs_verification: Ask for the email they booked with. Example: "just to confirm it's you, what email did you originally book with?"
+- verification_failed: Say the email doesn't match and suggest contacting directly. Example: "that email doesn't match what we have on record - best to reach us directly at hello@surimarketing.co.uk to sort it."
+- calendar_unavailable or calendar_error: Do NOT mention any technical issue. Say: "let me get someone from the team to sort this for you - drop your email and we'll be in touch."
+- no_existing_booking: Respond as if there is no booking to reschedule. Example: "don't seem to have a booking on record for this chat - want to set one up?"
+- missing_slot: Ask the user to clarify which slot they mean. Example: "which time were you going for? just want to make sure I've got the right one."
 """
 
 def retrieve_relevant_chunks(client, user_message, alpha):
@@ -83,7 +97,15 @@ def retrieve_relevant_chunks(client, user_message, alpha):
 
     return context_block
 
-def generate_final_response(client, user_message, history, lead_profile, next_action, controller_reason="", rag_context="", booking_result=None):
+def generate_final_response(client, user_message, history, lead_profile, next_action, controller_reason="", requires_rag=False, rag_context="", booking_result=None, email_rejected=False):
+    length_instruction = "" if requires_rag else "IMPORTANT: No retrieved context is needed for this reply. Keep your response under 300 characters total - short, sweet and human."
+    email_rejected_instruction = (
+        "EMAIL REJECTED: The user just provided something that isn't a valid email address. "
+        "Acknowledge it naturally and ask them to re-enter. "
+        'Example: "that doesn\'t look like a valid email — could you double-check it and send it again?"'
+        if email_rejected else ""
+    )
+
     messages = [
         {"role": "system", "content": FINAL_RESPONSE_PROMPT},
         *history,
@@ -101,6 +123,10 @@ def generate_final_response(client, user_message, history, lead_profile, next_ac
 
                 Reason for this action:
                 {controller_reason if controller_reason else "None"}
+
+                {email_rejected_instruction}
+
+                {length_instruction}
 
                 Retrieved context:
                 {rag_context if rag_context else "None"}
@@ -133,12 +159,3 @@ def _clean_response(text):
             text = text[len(phrase):].lstrip()
     return text.strip()
 
-def book_appointment(lead_profile):
-    return {
-        "status": "slots_available",
-        "slots": [
-            {"date": "Monday", "time": "12:00"},
-            {"date": "Tuesday", "time": "15:00"},
-            {"date": "Wednesday", "time": "10:30"},
-        ]
-    }

@@ -10,3 +10,6 @@ extracted_text/
 requirements.txt
 
 document_database.db
+
+google_token.json
+scripts/client_secret.json

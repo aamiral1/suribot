@@ -33,6 +33,14 @@ Required in `.env` (never commit this file):
 - `OPENAI_API_KEY`
 - `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_S3_BUCKET`
 - `PINECONE_API_KEY`, `PINECONE_INDEX_NAME`
+- `GOOGLE_TOKEN_PATH` — path to OAuth2 token file (default: `google_token.json`)
+- `GOOGLE_CALENDAR_ID` — calendar ID to use (default: `primary`)
+- `GOOGLE_CLIENT_SECRETS_PATH` — path to client_secret.json for the setup script (default: `scripts/client_secret.json`)
+
+Google Calendar one-time setup:
+1. Create a GCP project, enable Calendar API, create OAuth 2.0 Client ID (Desktop app), download JSON → `scripts/client_secret.json`
+2. Run `python scripts/google_auth.py` → browser opens → authorise → `google_token.json` created
+3. For EC2 deployment: `scp google_token.json` to the server and `chmod 600` it
 
 ## Dependencies
 

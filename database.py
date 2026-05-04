@@ -148,7 +148,24 @@ class Database:
                     profile JSONB NOT NULL DEFAULT '{{}}',
                     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                 );
-                
+
+                CREATE TABLE IF NOT EXISTS bookings (
+                    booking_id  TEXT PRIMARY KEY,
+                    session_id  TEXT NOT NULL,
+                    event_id    TEXT NOT NULL,
+                    slot_iso    TEXT NOT NULL,
+                    name        TEXT,
+                    email       TEXT,
+                    status      TEXT NOT NULL DEFAULT 'confirmed',
+                    created_at  TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                );
+
+                CREATE INDEX IF NOT EXISTS idx_bookings_session
+                    ON bookings(session_id);
+
+                CREATE INDEX IF NOT EXISTS idx_bookings_email
+                    ON bookings(email);
+
             """
 
             cursor.execute(create_table_command)
@@ -859,6 +876,114 @@ class Database:
             cursor.close()
             self._put_conn(connection)
             
+
+    def save_booking(self, session_id, event_id, slot_iso, name, email) -> str:
+        connection = self._get_conn()
+        cursor = connection.cursor()
+        booking_id = str(uuid.uuid4())
+        command = """
+        INSERT INTO bookings (booking_id, session_id, event_id, slot_iso, name, email)
+        VALUES (%s, %s, %s, %s, %s, %s)
+        """
+        try:
+            cursor.execute(command, (booking_id, session_id, event_id, slot_iso, name, email))
+            connection.commit()
+            return booking_id
+        except Exception as e:
+            connection.rollback()
+            raise Exception(f"Error saving booking: {e}")
+        finally:
+            cursor.close()
+            self._put_conn(connection)
+
+    def get_booking_by_session(self, session_id) -> dict | None:
+        connection = self._get_conn()
+        cursor = connection.cursor()
+        query = """
+        SELECT booking_id, event_id, slot_iso, name, email, status
+        FROM bookings
+        WHERE session_id = %s
+        ORDER BY created_at DESC
+        LIMIT 1
+        """
+        try:
+            cursor.execute(query, (session_id,))
+            row = cursor.fetchone()
+            if not row:
+                return None
+            return {
+                "booking_id": row[0],
+                "event_id": row[1],
+                "slot_iso": row[2],
+                "name": row[3],
+                "email": row[4],
+                "status": row[5],
+            }
+        except Exception as e:
+            raise Exception(f"Error fetching booking: {e}")
+        finally:
+            cursor.close()
+            self._put_conn(connection)
+
+    def get_booking_by_email(self, email: str) -> dict | None:
+        connection = self._get_conn()
+        cursor = connection.cursor()
+        query = """
+        SELECT booking_id, event_id, slot_iso, name, email, status
+        FROM bookings
+        WHERE LOWER(email) = LOWER(%s) AND status != 'cancelled'
+        ORDER BY created_at DESC
+        LIMIT 1
+        """
+        try:
+            cursor.execute(query, (email.strip(),))
+            row = cursor.fetchone()
+            if not row:
+                return None
+            return {
+                "booking_id": row[0],
+                "event_id": row[1],
+                "slot_iso": row[2],
+                "name": row[3],
+                "email": row[4],
+                "status": row[5],
+            }
+        except Exception as e:
+            raise Exception(f"Error fetching booking by email: {e}")
+        finally:
+            cursor.close()
+            self._put_conn(connection)
+
+    def update_booking_slot(self, booking_id, new_slot_iso) -> None:
+        connection = self._get_conn()
+        cursor = connection.cursor()
+        command = """
+        UPDATE bookings SET slot_iso = %s, status = 'rescheduled'
+        WHERE booking_id = %s
+        """
+        try:
+            cursor.execute(command, (new_slot_iso, booking_id))
+            connection.commit()
+        except Exception as e:
+            connection.rollback()
+            raise Exception(f"Error updating booking slot: {e}")
+        finally:
+            cursor.close()
+            self._put_conn(connection)
+
+    def cancel_booking(self, booking_id) -> None:
+        connection = self._get_conn()
+        cursor = connection.cursor()
+        command = "UPDATE bookings SET status = 'cancelled' WHERE booking_id = %s"
+        try:
+            cursor.execute(command, (booking_id,))
+            connection.commit()
+        except Exception as e:
+            connection.rollback()
+            raise Exception(f"Error cancelling booking: {e}")
+        finally:
+            cursor.close()
+            self._put_conn(connection)
 
     # private helper functions
     def _get_conn(self):

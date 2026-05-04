@@ -1,0 +1,523 @@
+[
+  {
+    "id": "tc_001",
+    "scenario": "Blank profile — user introduces their business and location",
+    "history": [
+      {"role": "assistant", "content": "hey! what kind of business are you running?"}
+    ],
+    "lead_profile": {
+      "business_type": null, "location": null, "current_marketing": null,
+      "main_goal": null, "main_problem": null, "pain_confirmed": false,
+      "solution_matched": false, "objection": null, "booking_offered": false,
+      "booking_completed": false, "contact_name": null, "contact_email": null,
+      "contact_phone": null, "requested_day": null, "requested_time_from": null,
+      "requested_time_to": null
+    },
+    "last_actions": [],
+    "sales_turn": 1,
+    "user_message": "we run a small restaurant in Birmingham",
+    "expected": {
+      "next_action": "ASK_PROBLEM_QUESTION",
+      "lead_profile_updates": {
+        "business_type": "restaurant",
+        "location": "Birmingham"
+      },
+      "requested_day": null, "requested_time_from": null, "requested_time_to": null,
+      "selected_slot_day": null, "selected_slot_time": null, "provided_email": null
+    }
+  },
+  {
+    "id": "tc_002",
+    "scenario": "business_type known — user states their main marketing problem",
+    "history": [
+      {"role": "assistant", "content": "nice — what's the main challenge you're facing with marketing right now?"}
+    ],
+    "lead_profile": {
+      "business_type": "restaurant", "location": "Birmingham", "current_marketing": null,
+      "main_goal": null, "main_problem": null, "pain_confirmed": false,
+      "solution_matched": false, "objection": null, "booking_offered": false,
+      "booking_completed": false, "contact_name": null, "contact_email": null,
+      "contact_phone": null, "requested_day": null, "requested_time_from": null,
+      "requested_time_to": null
+    },
+    "last_actions": ["ASK_PROBLEM_QUESTION"],
+    "sales_turn": 2,
+    "user_message": "we struggle to get new customers, barely any online presence",
+    "expected": {
+      "next_action": "EXPLAIN_IMPLICATION",
+      "lead_profile_updates": {
+        "main_problem": "new customers"
+      },
+      "requested_day": null, "requested_time_from": null, "requested_time_to": null,
+      "selected_slot_day": null, "selected_slot_time": null, "provided_email": null
+    }
+  },
+  {
+    "id": "tc_003",
+    "scenario": "Qualified lead — controller should offer booking call",
+    "history": [
+      {"role": "assistant", "content": "that's a common one — without visibility online you're basically invisible to new customers searching for places to eat."},
+      {"role": "user", "content": "exactly, it's frustrating"},
+      {"role": "assistant", "content": "we work with local businesses like yours to build that presence through targeted social. makes a real difference to footfall."}
+    ],
+    "lead_profile": {
+      "business_type": "restaurant", "location": "Birmingham", "current_marketing": null,
+      "main_goal": null, "main_problem": "no online presence, struggling to get new customers",
+      "pain_confirmed": true, "solution_matched": true, "objection": null,
+      "booking_offered": false, "booking_completed": false, "contact_name": null,
+      "contact_email": null, "contact_phone": null, "requested_day": null,
+      "requested_time_from": null, "requested_time_to": null
+    },
+    "last_actions": ["MATCH_SOLUTION"],
+    "sales_turn": 2,
+    "user_message": "yeah that sounds like what we need",
+    "expected": {
+      "next_action": "OFFER_AND_COLLECT",
+      "lead_profile_updates": {
+        "booking_offered": true
+      },
+      "requested_day": null, "requested_time_from": null, "requested_time_to": null,
+      "selected_slot_day": null, "selected_slot_time": null, "provided_email": null
+    }
+  },
+  {
+    "id": "tc_004",
+    "scenario": "User asks a factual question about services",
+    "history": [
+      {"role": "assistant", "content": "what kind of business are you running?"},
+      {"role": "user", "content": "we're a gym in Manchester"}
+    ],
+    "lead_profile": {
+      "business_type": "gym", "location": "Manchester", "current_marketing": null,
+      "main_goal": null, "main_problem": null, "pain_confirmed": false,
+      "solution_matched": false, "objection": null, "booking_offered": false,
+      "booking_completed": false, "contact_name": null, "contact_email": null,
+      "contact_phone": null, "requested_day": null, "requested_time_from": null,
+      "requested_time_to": null
+    },
+    "last_actions": ["ASK_SITUATION_QUESTION"],
+    "sales_turn": 1,
+    "user_message": "what kind of services do you actually offer?",
+    "expected": {
+      "next_action": "ANSWER_WITH_RAG",
+      "lead_profile_updates": {},
+      "requested_day": null, "requested_time_from": null, "requested_time_to": null,
+      "selected_slot_day": null, "selected_slot_time": null, "provided_email": null
+    }
+  },
+  {
+    "id": "tc_005",
+    "scenario": "User asks about pricing",
+    "history": [
+      {"role": "assistant", "content": "so the main thing you want is more leads through social?"},
+      {"role": "user", "content": "yeah exactly"}
+    ],
+    "lead_profile": {
+      "business_type": "personal trainer", "location": null, "current_marketing": null,
+      "main_goal": "more leads", "main_problem": null, "pain_confirmed": false,
+      "solution_matched": false, "objection": null, "booking_offered": false,
+      "booking_completed": false, "contact_name": null, "contact_email": null,
+      "contact_phone": null, "requested_day": null, "requested_time_from": null,
+      "requested_time_to": null
+    },
+    "last_actions": ["ASK_PROBLEM_QUESTION"],
+    "sales_turn": 2,
+    "user_message": "how much does it cost?",
+    "expected": {
+      "next_action": "ANSWER_WITH_RAG",
+      "lead_profile_updates": {},
+      "requested_day": null, "requested_time_from": null, "requested_time_to": null,
+      "selected_slot_day": null, "selected_slot_time": null, "provided_email": null
+    }
+  },
+  {
+    "id": "tc_006",
+    "scenario": "User raises a price objection",
+    "history": [
+      {"role": "assistant", "content": "our packages start from £500/month and include full content creation and ad management."},
+      {"role": "user", "content": "that seems quite high"}
+    ],
+    "lead_profile": {
+      "business_type": "restaurant", "location": "Leeds", "current_marketing": null,
+      "main_goal": null, "main_problem": "not getting enough bookings", "pain_confirmed": true,
+      "solution_matched": false, "objection": null, "booking_offered": false,
+      "booking_completed": false, "contact_name": null, "contact_email": null,
+      "contact_phone": null, "requested_day": null, "requested_time_from": null,
+      "requested_time_to": null
+    },
+    "last_actions": ["ANSWER_WITH_RAG"],
+    "sales_turn": 2,
+    "user_message": "it's too expensive for us right now",
+    "expected": {
+      "next_action": "HANDLE_OBJECTION",
+      "lead_profile_updates": {
+        "objection": "price"
+      },
+      "requested_day": null, "requested_time_from": null, "requested_time_to": null,
+      "selected_slot_day": null, "selected_slot_time": null, "provided_email": null
+    }
+  },
+  {
+    "id": "tc_007",
+    "scenario": "User compares Suri to using freelancers",
+    "history": [
+      {"role": "assistant", "content": "what's your current marketing setup like?"}
+    ],
+    "lead_profile": {
+      "business_type": "e-commerce", "location": null, "current_marketing": "freelancers",
+      "main_goal": null, "main_problem": null, "pain_confirmed": false,
+      "solution_matched": false, "objection": null, "booking_offered": false,
+      "booking_completed": false, "contact_name": null, "contact_email": null,
+      "contact_phone": null, "requested_day": null, "requested_time_from": null,
+      "requested_time_to": null
+    },
+    "last_actions": ["ASK_SITUATION_QUESTION"],
+    "sales_turn": 2,
+    "user_message": "we already use freelancers for social, why would we switch to an agency?",
+    "expected": {
+      "next_action": "HANDLE_COMPARISON",
+      "lead_profile_updates": {},
+      "requested_day": null, "requested_time_from": null, "requested_time_to": null,
+      "selected_slot_day": null, "selected_slot_time": null, "provided_email": null
+    }
+  },
+  {
+    "id": "tc_008",
+    "scenario": "User rejects the offer",
+    "history": [
+      {"role": "assistant", "content": "sounds like a discovery call could be really useful — what's your name and best email?"}
+    ],
+    "lead_profile": {
+      "business_type": "salon", "location": "Bristol", "current_marketing": null,
+      "main_goal": null, "main_problem": "no new clients", "pain_confirmed": true,
+      "solution_matched": true, "objection": null, "booking_offered": true,
+      "booking_completed": false, "contact_name": null, "contact_email": null,
+      "contact_phone": null, "requested_day": null, "requested_time_from": null,
+      "requested_time_to": null
+    },
+    "last_actions": ["OFFER_AND_COLLECT"],
+    "sales_turn": 2,
+    "user_message": "no thanks, not interested",
+    "expected": {
+      "next_action": "HANDLE_REJECTION",
+      "lead_profile_updates": {},
+      "requested_day": null, "requested_time_from": null, "requested_time_to": null,
+      "selected_slot_day": null, "selected_slot_time": null, "provided_email": null
+    }
+  },
+  {
+    "id": "tc_009",
+    "scenario": "Completely off-topic message",
+    "history": [
+      {"role": "assistant", "content": "what's the main challenge with your current marketing?"}
+    ],
+    "lead_profile": {
+      "business_type": "retail", "location": null, "current_marketing": null,
+      "main_goal": null, "main_problem": null, "pain_confirmed": false,
+      "solution_matched": false, "objection": null, "booking_offered": false,
+      "booking_completed": false, "contact_name": null, "contact_email": null,
+      "contact_phone": null, "requested_day": null, "requested_time_from": null,
+      "requested_time_to": null
+    },
+    "last_actions": ["ASK_PROBLEM_QUESTION"],
+    "sales_turn": 1,
+    "user_message": "can you recommend a good pizza place near me?",
+    "expected": {
+      "next_action": "REDIRECT_OFF_TOPIC",
+      "lead_profile_updates": {},
+      "requested_day": null, "requested_time_from": null, "requested_time_to": null,
+      "selected_slot_day": null, "selected_slot_time": null, "provided_email": null
+    }
+  },
+  {
+    "id": "tc_010",
+    "scenario": "Short acknowledgement — no progression needed",
+    "history": [
+      {"role": "assistant", "content": "makes sense — without a consistent online presence it's hard to compete locally."}
+    ],
+    "lead_profile": {
+      "business_type": "cafe", "location": "London", "current_marketing": null,
+      "main_goal": null, "main_problem": "no social media presence", "pain_confirmed": true,
+      "solution_matched": false, "objection": null, "booking_offered": false,
+      "booking_completed": false, "contact_name": null, "contact_email": null,
+      "contact_phone": null, "requested_day": null, "requested_time_from": null,
+      "requested_time_to": null
+    },
+    "last_actions": ["EXPLAIN_IMPLICATION"],
+    "sales_turn": 2,
+    "user_message": "ok cheers",
+    "expected": {
+      "next_action": "ACKNOWLEDGE_AND_HOLD",
+      "lead_profile_updates": {},
+      "requested_day": null, "requested_time_from": null, "requested_time_to": null,
+      "selected_slot_day": null, "selected_slot_time": null, "provided_email": null
+    }
+  },
+  {
+    "id": "tc_011",
+    "scenario": "Booking offered — user gives name and valid email",
+    "history": [
+      {"role": "assistant", "content": "i'd love to set up a quick discovery call — what's your name and best email?"}
+    ],
+    "lead_profile": {
+      "business_type": "gym", "location": "Sheffield", "current_marketing": null,
+      "main_goal": "get more members", "main_problem": "low footfall", "pain_confirmed": true,
+      "solution_matched": true, "objection": null, "booking_offered": true,
+      "booking_completed": false, "contact_name": null, "contact_email": null,
+      "contact_phone": null, "requested_day": null, "requested_time_from": null,
+      "requested_time_to": null
+    },
+    "last_actions": ["OFFER_AND_COLLECT"],
+    "sales_turn": 2,
+    "user_message": "sure, I'm James and my email is james@example.com",
+    "expected": {
+      "next_action": "OFFER_AVAILABLE_SLOTS",
+      "lead_profile_updates": {
+        "contact_name": "James",
+        "contact_email": "james@example.com"
+      },
+      "requested_day": null, "requested_time_from": null, "requested_time_to": null,
+      "selected_slot_day": null, "selected_slot_time": null, "provided_email": null
+    }
+  },
+  {
+    "id": "tc_012",
+    "scenario": "Booking offered — user gives name but invalid email (guardrail should block to OFFER_AND_COLLECT)",
+    "history": [
+      {"role": "assistant", "content": "great — what's your name and best email so I can get that booked in?"}
+    ],
+    "lead_profile": {
+      "business_type": "salon", "location": "Manchester", "current_marketing": null,
+      "main_goal": null, "main_problem": "struggling to get new clients", "pain_confirmed": true,
+      "solution_matched": true, "objection": null, "booking_offered": true,
+      "booking_completed": false, "contact_name": null, "contact_email": null,
+      "contact_phone": null, "requested_day": null, "requested_time_from": null,
+      "requested_time_to": null
+    },
+    "last_actions": ["OFFER_AND_COLLECT"],
+    "sales_turn": 2,
+    "user_message": "I'm Sarah, email is notanemail",
+    "expected": {
+      "next_action": "OFFER_AND_COLLECT",
+      "lead_profile_updates": {
+        "contact_name": "Sarah"
+      },
+      "requested_day": null, "requested_time_from": null, "requested_time_to": null,
+      "selected_slot_day": null, "selected_slot_time": null, "provided_email": null
+    }
+  },
+  {
+    "id": "tc_013",
+    "scenario": "Booking offered — user gives name only, no email yet",
+    "history": [
+      {"role": "assistant", "content": "what's your name and email so I can send over the invite?"}
+    ],
+    "lead_profile": {
+      "business_type": "dental practice", "location": "Birmingham", "current_marketing": null,
+      "main_goal": null, "main_problem": "not getting enough new patients", "pain_confirmed": true,
+      "solution_matched": true, "objection": null, "booking_offered": true,
+      "booking_completed": false, "contact_name": null, "contact_email": null,
+      "contact_phone": null, "requested_day": null, "requested_time_from": null,
+      "requested_time_to": null
+    },
+    "last_actions": ["OFFER_AND_COLLECT"],
+    "sales_turn": 2,
+    "user_message": "I'm Tom",
+    "expected": {
+      "next_action": "OFFER_AND_COLLECT",
+      "lead_profile_updates": {
+        "contact_name": "Tom"
+      },
+      "requested_day": null, "requested_time_from": null, "requested_time_to": null,
+      "selected_slot_day": null, "selected_slot_time": null, "provided_email": null
+    }
+  },
+  {
+    "id": "tc_014",
+    "scenario": "Contact details known — user picks a day for the call",
+    "history": [
+      {"role": "assistant", "content": "nice one, got your details. any particular day that works for a quick call?"}
+    ],
+    "lead_profile": {
+      "business_type": "estate agency", "location": "Liverpool", "current_marketing": null,
+      "main_goal": "more property listings", "main_problem": "low online visibility",
+      "pain_confirmed": true, "solution_matched": true, "objection": null,
+      "booking_offered": true, "booking_completed": false,
+      "contact_name": "Emma", "contact_email": "emma@example.com",
+      "contact_phone": null, "requested_day": null, "requested_time_from": null,
+      "requested_time_to": null
+    },
+    "last_actions": ["OFFER_AND_COLLECT"],
+    "sales_turn": 3,
+    "user_message": "does thursday work?",
+    "expected": {
+      "next_action": "OFFER_AVAILABLE_SLOTS",
+      "lead_profile_updates": {},
+      "requested_day": "thursday",
+      "requested_time_from": null, "requested_time_to": null,
+      "selected_slot_day": null, "selected_slot_time": null, "provided_email": null
+    }
+  },
+  {
+    "id": "tc_015",
+    "scenario": "Day established — user refines to afternoon slots only",
+    "history": [
+      {"role": "assistant", "content": "i've got thursday at 9am, 9:15am, or 9:30am — which works?"},
+      {"role": "user", "content": "any after 2pm?"}
+    ],
+    "lead_profile": {
+      "business_type": "estate agency", "location": "Liverpool", "current_marketing": null,
+      "main_goal": "more property listings", "main_problem": "low online visibility",
+      "pain_confirmed": true, "solution_matched": true, "objection": null,
+      "booking_offered": true, "booking_completed": false,
+      "contact_name": "Emma", "contact_email": "emma@example.com",
+      "contact_phone": null, "requested_day": "thursday", "requested_time_from": null,
+      "requested_time_to": null
+    },
+    "last_actions": ["OFFER_AVAILABLE_SLOTS"],
+    "sales_turn": 3,
+    "user_message": "any after 2pm?",
+    "expected": {
+      "next_action": "OFFER_AVAILABLE_SLOTS",
+      "lead_profile_updates": {},
+      "requested_day": "thursday",
+      "requested_time_from": "14:00",
+      "requested_time_to": null,
+      "selected_slot_day": null, "selected_slot_time": null, "provided_email": null
+    }
+  },
+  {
+    "id": "tc_016",
+    "scenario": "User selects a specific slot — controller should book",
+    "history": [
+      {"role": "assistant", "content": "got a slot thursday at 2pm, 2:15pm, or 2:30pm — which one?"}
+    ],
+    "lead_profile": {
+      "business_type": "estate agency", "location": "Liverpool", "current_marketing": null,
+      "main_goal": "more property listings", "main_problem": "low online visibility",
+      "pain_confirmed": true, "solution_matched": true, "objection": null,
+      "booking_offered": true, "booking_completed": false,
+      "contact_name": "Emma", "contact_email": "emma@example.com",
+      "contact_phone": null, "requested_day": "thursday", "requested_time_from": "14:00",
+      "requested_time_to": null
+    },
+    "last_actions": ["OFFER_AVAILABLE_SLOTS"],
+    "sales_turn": 4,
+    "user_message": "let's do thursday at 9am",
+    "expected": {
+      "next_action": "BOOK_APPOINTMENT",
+      "lead_profile_updates": {},
+      "requested_day": null, "requested_time_from": null, "requested_time_to": null,
+      "selected_slot_day": "thursday",
+      "selected_slot_time": "09:00",
+      "provided_email": null
+    }
+  },
+  {
+    "id": "tc_017",
+    "scenario": "Guardrail override — sales_turn >= 3, booking not yet offered",
+    "history": [
+      {"role": "assistant", "content": "what are you currently doing to get new customers?"},
+      {"role": "user", "content": "not much, just word of mouth really"},
+      {"role": "assistant", "content": "that's quite common — word of mouth only goes so far. what would a good month look like for you?"},
+      {"role": "user", "content": "double what we're doing now"}
+    ],
+    "lead_profile": {
+      "business_type": "cleaning company", "location": "Leeds", "current_marketing": "word of mouth",
+      "main_goal": "double revenue", "main_problem": "limited reach", "pain_confirmed": true,
+      "solution_matched": false, "objection": null, "booking_offered": false,
+      "booking_completed": false, "contact_name": null, "contact_email": null,
+      "contact_phone": null, "requested_day": null, "requested_time_from": null,
+      "requested_time_to": null
+    },
+    "last_actions": ["ASK_SITUATION_QUESTION", "ASK_PROBLEM_QUESTION"],
+    "sales_turn": 3,
+    "user_message": "yeah that would be the dream",
+    "expected": {
+      "next_action": "OFFER_AND_COLLECT",
+      "lead_profile_updates": {
+        "booking_offered": true
+      },
+      "requested_day": null, "requested_time_from": null, "requested_time_to": null,
+      "selected_slot_day": null, "selected_slot_time": null, "provided_email": null
+    }
+  },
+  {
+    "id": "tc_018",
+    "scenario": "User wants to reschedule — no email provided yet",
+    "history": [
+      {"role": "assistant", "content": "you're booked in for thursday at 9am — see you then!"},
+      {"role": "user", "content": "actually can I change the time?"}
+    ],
+    "lead_profile": {
+      "business_type": "gym", "location": "Sheffield", "current_marketing": null,
+      "main_goal": null, "main_problem": null, "pain_confirmed": false,
+      "solution_matched": false, "objection": null, "booking_offered": true,
+      "booking_completed": true, "contact_name": "James", "contact_email": "james@example.com",
+      "contact_phone": null, "requested_day": null, "requested_time_from": null,
+      "requested_time_to": null
+    },
+    "last_actions": ["CONFIRM_BOOKING"],
+    "sales_turn": 4,
+    "user_message": "I need to reschedule my booking",
+    "expected": {
+      "next_action": ["RESCHEDULE_APPOINTMENT", "OFFER_AVAILABLE_SLOTS"],
+      "lead_profile_updates": {},
+      "requested_day": null, "requested_time_from": null, "requested_time_to": null,
+      "selected_slot_day": null, "selected_slot_time": null, "provided_email": null
+    }
+  },
+  {
+    "id": "tc_019",
+    "scenario": "User provides email to verify identity for reschedule",
+    "history": [
+      {"role": "assistant", "content": "just to confirm it's you, what email did you book with?"},
+      {"role": "user", "content": "I'd like to move it to friday at 11am"}
+    ],
+    "lead_profile": {
+      "business_type": "gym", "location": "Sheffield", "current_marketing": null,
+      "main_goal": null, "main_problem": null, "pain_confirmed": false,
+      "solution_matched": false, "objection": null, "booking_offered": true,
+      "booking_completed": true, "contact_name": "James", "contact_email": "james@example.com",
+      "contact_phone": null, "requested_day": null, "requested_time_from": null,
+      "requested_time_to": null
+    },
+    "last_actions": ["RESCHEDULE_APPOINTMENT"],
+    "sales_turn": 5,
+    "user_message": "my email is james@example.com, and I'd like friday at 11am",
+    "expected": {
+      "next_action": "RESCHEDULE_APPOINTMENT",
+      "lead_profile_updates": {},
+      "requested_day": null, "requested_time_from": null, "requested_time_to": null,
+      "selected_slot_day": "friday",
+      "selected_slot_time": "11:00",
+      "provided_email": "james@example.com"
+    }
+  },
+  {
+    "id": "tc_020",
+    "scenario": "User gives their current marketing setup — controller should extract it",
+    "history": [
+      {"role": "assistant", "content": "what are you currently doing for marketing?"}
+    ],
+    "lead_profile": {
+      "business_type": "law firm", "location": "London", "current_marketing": null,
+      "main_goal": null, "main_problem": null, "pain_confirmed": false,
+      "solution_matched": false, "objection": null, "booking_offered": false,
+      "booking_completed": false, "contact_name": null, "contact_email": null,
+      "contact_phone": null, "requested_day": null, "requested_time_from": null,
+      "requested_time_to": null
+    },
+    "last_actions": ["ASK_SITUATION_QUESTION"],
+    "sales_turn": 2,
+    "user_message": "we run some Google Ads but nothing on social media",
+    "expected": {
+      "next_action": "ASK_PROBLEM_QUESTION",
+      "lead_profile_updates": {
+        "current_marketing": "Google Ads"
+      },
+      "requested_day": null, "requested_time_from": null, "requested_time_to": null,
+      "selected_slot_day": null, "selected_slot_time": null, "provided_email": null
+    }
+  }
+]
