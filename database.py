@@ -1,4 +1,5 @@
 import json
+from datetime import date, timedelta
 
 import psycopg2 as pg2
 from psycopg2.pool import ThreadedConnectionPool
@@ -984,6 +985,89 @@ class Database:
         finally:
             cursor.close()
             self._put_conn(connection)
+
+    def get_analytics_summary(self, days: int) -> dict:
+        connection = self._get_conn()
+        cursor = connection.cursor()
+        interval = f'{days} days'
+        try:
+            cursor.execute(
+                "SELECT COUNT(DISTINCT session_id) FROM conversation_messages WHERE created_at >= NOW() - INTERVAL %s",
+                (interval,)
+            )
+            conversations = cursor.fetchone()[0]
+
+            cursor.execute(
+                "SELECT COUNT(*) FROM bookings WHERE created_at >= NOW() - INTERVAL %s AND status != 'cancelled'",
+                (interval,)
+            )
+            meetings = cursor.fetchone()[0]
+
+            cursor.execute(
+                "SELECT COUNT(*) FROM conversation_messages WHERE role = 'user' AND created_at >= NOW() - INTERVAL %s",
+                (interval,)
+            )
+            messages = cursor.fetchone()[0]
+
+            cursor.execute(
+                """SELECT DATE(created_at) AS date, COUNT(DISTINCT session_id) AS conversations
+                   FROM conversation_messages
+                   WHERE created_at >= NOW() - INTERVAL %s
+                   GROUP BY DATE(created_at)
+                   ORDER BY date ASC""",
+                (interval,)
+            )
+            rows = cursor.fetchall()
+        finally:
+            cursor.close()
+            self._put_conn(connection)
+
+        daily_map = {str(row[0]): row[1] for row in rows}
+        today = date.today()
+        daily = [
+            {"date": (today - timedelta(days=days - 1 - i)).strftime('%Y-%m-%d'),
+             "conversations": daily_map.get((today - timedelta(days=days - 1 - i)).strftime('%Y-%m-%d'), 0)}
+            for i in range(days)
+        ]
+
+        cvr = round(meetings / conversations * 100, 1) if conversations > 0 else 0.0
+
+        return {
+            "conversations": conversations,
+            "meetings": meetings,
+            "messages": messages,
+            "cvr": cvr,
+            "daily": daily
+        }
+
+    def get_bookings_for_period(self, days: int) -> list:
+        connection = self._get_conn()
+        cursor = connection.cursor()
+        interval = f'{days} days'
+        command = """
+        SELECT name, email, created_at, slot_iso, status
+        FROM bookings
+        WHERE created_at >= NOW() - INTERVAL %s
+        AND status != 'cancelled'
+        ORDER BY created_at DESC
+        """
+        try:
+            cursor.execute(command, (interval,))
+            rows = cursor.fetchall()
+        finally:
+            cursor.close()
+            self._put_conn(connection)
+
+        return [
+            {
+                "name": row[0],
+                "email": row[1],
+                "booked_at": row[2].isoformat(),
+                "meeting_time": row[3],
+                "status": row[4]
+            }
+            for row in rows
+        ]
 
     # private helper functions
     def _get_conn(self):

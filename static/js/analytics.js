@@ -3,7 +3,7 @@
          Flask routes once they exist:
            GET /analytics/summary?days=N
            GET /analytics/bookings                         ─── */
-  const DEMO_MODE = true;
+  const DEMO_MODE = false;
  
   let range = 7, chart = null;
  
@@ -35,7 +35,7 @@
   }
  
   async function fetchSummary(d) { return DEMO_MODE ? demoSummary(d) : fetch(`/analytics/summary?days=${d}`).then(r=>r.json()); }
-  async function fetchBookings()  { return DEMO_MODE ? demoBookings()  : fetch('/analytics/bookings').then(r=>r.json()); }
+  async function fetchBookings(d)  { return DEMO_MODE ? demoBookings()  : fetch(`/analytics/bookings?days=${d}`).then(r=>r.json()); }
  
   function renderKPIs(d,days) {
     document.getElementById('kpi-conversations').textContent=fmt(d.conversations);
@@ -55,7 +55,7 @@
     chart=new Chart(ctx,{type:'line',data:{labels,datasets:[{label:'Conversations',data:values,fill:true,
       backgroundColor:c=>{const g=c.chart.ctx.createLinearGradient(0,0,0,180);g.addColorStop(0,'rgba(124,58,237,0.22)');g.addColorStop(1,'rgba(124,58,237,0)');return g;},
       borderColor:'#7c3aed',borderWidth:2,pointBackgroundColor:'#7c3aed',pointRadius:3,pointHoverRadius:5,tension:0.4}]},
-      options:{responsive:true,layout:{padding:{left:0,right:0,top:0,bottom:0}},interaction:{mode:'index',intersect:false},
+      options:{responsive:true,aspectRatio:4,layout:{padding:{left:0,right:0,top:0,bottom:0}},interaction:{mode:'index',intersect:false},
         plugins:{legend:{display:false},tooltip:{backgroundColor:'#13131f',borderColor:'#1f1f35',borderWidth:1,
           titleColor:'#e2e2f0',bodyColor:'#a78bfa',padding:10,
           titleFont:{family:"'Plus Jakarta Sans',sans-serif",weight:'600'},bodyFont:{family:"'Plus Jakarta Sans',sans-serif"}}},
@@ -117,7 +117,7 @@
   }
  
   async function load(days) {
-    const [summary,bookings]=await Promise.all([fetchSummary(days),fetchBookings()]);
+    const [summary,bookings]=await Promise.all([fetchSummary(days),fetchBookings(days)]);
     renderKPIs(summary,days); renderChart(summary.daily);
     renderTable(bookings);
   }

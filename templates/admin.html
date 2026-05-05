@@ -46,16 +46,6 @@
         <form id="upload_form" method="POST" enctype="multipart/form-data">
           {{ form.hidden_tag() }}
 
-          <!-- Document type + structure selectors -->
-          <div class="doc-type-row">
-            <label for="doc-type-select">Document Type</label>
-            <select id="doc-type-select" name="doc_type">
-              <option value="knowledge_base">Knowledge Base</option>
-              <option value="system_prompt">System Prompt</option>
-            </select>
-
-          </div>
-
           <!-- Drop zone -->
           <div class="drop-zone" id="drop-zone">
             <div class="drop-icon">📂</div>

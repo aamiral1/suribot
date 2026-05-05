@@ -1,132 +1,99 @@
-<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>SuriBot — Analytics</title>
-  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="{{ url_for('static',filename='styles/analytics.css') }}" />
-</head>
-<body>
-<div class="layout">
- 
-  <!-- Sidebar -->
-  <aside class="sidebar">
-    <div class="sidebar__brand">
-      <div class="brand-icon">✦</div>
-      <div>
-        <div class="brand-name">SuriBot</div>
-        <div class="brand-sub">Admin Dashboard</div>
+{% extends "base_admin.html" %}
+{% block title %}SuriBot — Analytics{% endblock %}
+
+{% block extra_styles %}
+<link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
+<link rel="stylesheet" href="{{ url_for('static',filename='styles/analytics.css') }}" />
+{% endblock %}
+
+{% block main %}
+<main class="main">
+  <div class="topbar">
+    <div class="topbar__title">Analytics</div>
+    <div style="display:flex;align-items:center;gap:10px;margin-left:auto;">
+      <div class="date-range-group">
+        <button class="date-btn active" data-range="7">7d</button>
+        <button class="date-btn" data-range="30">30d</button>
+        <button class="date-btn" data-range="90">90d</button>
+      </div>
+      <div class="topbar__pill">
+        <span class="topbar__pill-dot"></span>
+        Chatbot Online
       </div>
     </div>
-    <nav class="sidebar__nav">
-      <div class="nav-section-label">Content</div>
-      <a class="nav-item" href="/admin"><span class="nav-icon">🗂️</span> Knowledge Base</a>
-      <a class="nav-item" href="/sitemap"><span class="nav-icon">🔗</span> Sitemap Parser</a>
-      <div class="nav-section-label">Insights</div>
-      <a class="nav-item active" href="/analytics"><span class="nav-icon">📊</span> Analytics</a>
-      <div class="nav-section-label">Preview</div>
-      <a class="nav-item" href="/" target="_blank"><span class="nav-icon">💬</span> Open Chatbot</a>
-    </nav>
-    <div class="sidebar__footer">
-      <div class="user-row">
-        <div class="user-avatar">👤</div>
+  </div>
+
+  <div class="content">
+
+    <!-- KPI Cards -->
+    <div class="kpi-grid">
+      <div class="kpi-card kpi-card--purple">
+        <div class="kpi-icon kpi-icon--purple" style="margin-bottom:14px;">💬</div>
+        <div class="kpi-value" id="kpi-conversations">—</div>
+        <div class="kpi-label">Total Conversations</div>
+        <div class="kpi-sub" id="kpi-conv-sub">Last 7 days</div>
+      </div>
+      <div class="kpi-card kpi-card--green">
+        <div class="kpi-icon kpi-icon--green" style="margin-bottom:14px;">📅</div>
+        <div class="kpi-value" id="kpi-meetings">—</div>
+        <div class="kpi-label">Discovery Meetings Booked</div>
+        <div class="kpi-sub" id="kpi-mtg-sub">Last 7 days</div>
+      </div>
+      <div class="kpi-card kpi-card--amber">
+        <div class="kpi-icon kpi-icon--amber" style="margin-bottom:14px;">🎯</div>
+        <div class="kpi-value" id="kpi-cvr">—</div>
+        <div class="kpi-label">Conversion Rate</div>
+        <div class="kpi-sub">Conversations → Bookings</div>
+      </div>
+      <div class="kpi-card kpi-card--blue">
+        <div class="kpi-icon kpi-icon--blue" style="margin-bottom:14px;">⚡</div>
+        <div class="kpi-value" id="kpi-messages">—</div>
+        <div class="kpi-label">Messages Sent</div>
+        <div class="kpi-sub" id="kpi-msg-sub">By visitors</div>
+      </div>
+    </div>
+
+    <!-- Chart -->
+    <div class="kb-section">
+      <div class="kb-header">
         <div>
-          <div class="user-name">Admin</div>
-          <div class="user-role">Suri Marketing</div>
+          <div class="section-head"><h2>Conversations Over Time</h2><span class="tag tag--purple">✦ Daily</span></div>
+          <p class="kb-desc">Daily conversation volume for the selected period.</p>
         </div>
+      </div>
+      <div style="padding:16px 0 0;">
+        <canvas id="conv-chart" height="140"></canvas>
       </div>
     </div>
-  </aside>
- 
-  <!-- Main -->
-  <main class="main">
-    <div class="topbar">
-      <div class="topbar__title">Analytics</div>
-      <div style="display:flex;align-items:center;gap:10px;margin-left:auto;">
-        <div class="date-range-group">
-          <button class="date-btn active" data-range="7">7d</button>
-          <button class="date-btn" data-range="30">30d</button>
-          <button class="date-btn" data-range="90">90d</button>
-        </div>
-        <div class="topbar__pill">
-          <span class="topbar__pill-dot"></span>
-          Chatbot Online
-        </div>
-      </div>
-    </div>
- 
-    <div class="content">
- 
-      <!-- KPI Cards -->
-      <div class="kpi-grid">
-        <div class="kpi-card kpi-card--purple">
-          <div class="kpi-icon kpi-icon--purple" style="margin-bottom:14px;">💬</div>
-          <div class="kpi-value" id="kpi-conversations">—</div>
-          <div class="kpi-label">Total Conversations</div>
-          <div class="kpi-sub" id="kpi-conv-sub">Last 7 days</div>
-        </div>
-        <div class="kpi-card kpi-card--green">
-          <div class="kpi-icon kpi-icon--green" style="margin-bottom:14px;">📅</div>
-          <div class="kpi-value" id="kpi-meetings">—</div>
-          <div class="kpi-label">Discovery Meetings Booked</div>
-          <div class="kpi-sub" id="kpi-mtg-sub">Last 7 days</div>
-        </div>
-        <div class="kpi-card kpi-card--amber">
-          <div class="kpi-icon kpi-icon--amber" style="margin-bottom:14px;">🎯</div>
-          <div class="kpi-value" id="kpi-cvr">—</div>
-          <div class="kpi-label">Conversion Rate</div>
-          <div class="kpi-sub">Conversations → Bookings</div>
-        </div>
-        <div class="kpi-card kpi-card--blue">
-          <div class="kpi-icon kpi-icon--blue" style="margin-bottom:14px;">⚡</div>
-          <div class="kpi-value" id="kpi-messages">—</div>
-          <div class="kpi-label">Messages Sent</div>
-          <div class="kpi-sub" id="kpi-msg-sub">By visitors</div>
-        </div>
-      </div>
- 
-      <!-- Chart -->
-      <div class="kb-section">
-        <div class="kb-header">
-          <div>
-            <div class="section-head"><h2>Conversations Over Time</h2><span class="tag tag--purple">✦ Daily</span></div>
-            <p class="kb-desc">Daily conversation volume for the selected period.</p>
-          </div>
-        </div>
-        <div style="padding:16px 0 0;">
-          <canvas id="conv-chart" height="140"></canvas>
-        </div>
-      </div>
- 
-      <!-- Bookings Table -->
-      <div class="kb-section">
-        <div class="kb-header">
-          <div>
-            <div class="section-head"><h2>Recent Bookings</h2><span class="tag tag--green" id="booking-count-tag">0 Total</span></div>
-            <p class="kb-desc">Strategy calls booked through the chatbot in the last 7 days.</p>
-          </div>
-          <button class="btn--primary" id="refresh-bookings-btn">↻ Refresh</button>
-        </div>
-        <div style="padding:0 24px 24px;padding-top:16px;">
-          <table>
-            <thead>
-              <tr>
-                <th>Name</th><th>Email</th><th>Booked At</th><th>Meeting Time</th><th></th>
-              </tr>
-            </thead>
-            <tbody id="bookings-tbody">
-              <tr><td colspan="5" style="text-align:center;color:var(--c-text-muted);padding:32px 12px;">Loading…</td></tr>
-            </tbody>
-          </table>
-        </div>
-      </div>
- 
-    </div>
-  </main>
-</div>
 
+    <!-- Bookings Table -->
+    <div class="kb-section">
+      <div class="kb-header">
+        <div>
+          <div class="section-head"><h2>Recent Bookings</h2><span class="tag tag--green" id="booking-count-tag">0 Total</span></div>
+          <p class="kb-desc">Strategy calls booked through the chatbot in the last 7 days.</p>
+        </div>
+        <button class="btn--primary" id="refresh-bookings-btn">↻ Refresh</button>
+      </div>
+      <div style="padding:0 24px 24px;padding-top:16px;">
+        <table>
+          <thead>
+            <tr>
+              <th>Name</th><th>Email</th><th>Booked At</th><th>Meeting Time</th><th></th>
+            </tr>
+          </thead>
+          <tbody id="bookings-tbody">
+            <tr><td colspan="5" style="text-align:center;color:var(--c-text-muted);padding:32px 12px;">Loading…</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+  </div>
+</main>
+{% endblock %}
+
+{% block scripts %}
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 <script type="module" src="{{ url_for('static', filename='js/analytics.js') }}"></script>
-
-</body>
-</html>
+{% endblock %}

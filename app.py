@@ -1,6 +1,8 @@
 import json
+import bcrypt
+from functools import wraps
 
-from flask import Flask, render_template, jsonify, request
+from flask import Flask, render_template, jsonify, request, session, redirect, url_for
 from flask_restful import Api, Resource, reqparse
 from flask_wtf import FlaskForm
 from wtforms import FileField, SubmitField
@@ -118,11 +120,19 @@ SYSTEM_PROMPT = """
         """
 
 app = Flask(__name__)
-app.config["SECRET_KEY"] = "supersecretkey"
+app.config["SECRET_KEY"] = os.getenv("SECRET_KEY", "supersecretkey")
 app.config["UPLOAD_FOLDER"] = "static/files"
 app.config["OCR_PROCESSING_FOLDER"] = "static/ocr"
 app.config["EXTRACTED_TEXT_FOLDER"] = "static/extracted_text"
 api = Api(app)
+
+def login_required(f):
+    @wraps(f)
+    def decorated(*args, **kwargs):
+        if not session.get('logged_in'):
+            return redirect(url_for('login'))
+        return f(*args, **kwargs)
+    return decorated
 
 client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"), timeout=20)
 sales_controller = SalesController(client=client)
@@ -446,6 +456,7 @@ api.add_resource(ChatbotAPI, "/api")
 
 # REST API to poll document status (status, has_text)
 class DocumentStatusAPI(Resource):
+    @login_required
     def get(self, doc_id):
 
         # get status and extracted file path if available
@@ -515,6 +526,7 @@ api.add_resource(DocumentStatusAPI, "/document/<string:doc_id>/status")
 
 # REST API to get extracted text from document
 class ExtractedDocumentTextAPI(Resource):
+    @login_required
     def get(self, doc_id):
         # get extracted text file path of document
         try:
@@ -538,6 +550,7 @@ api.add_resource(ExtractedDocumentTextAPI, "/document/<string:doc_id>/text")
 
 # REST API to get all documents
 @app.route("/documents", methods=["GET"])
+@login_required
 def get_documents():
     try:
         rows = db.get_all_documents()
@@ -563,6 +576,7 @@ def get_documents():
 
 # REST API to mark a document as added to the knowledge base
 @app.route("/document/<string:doc_id>/add-to-kb", methods=["POST"])
+@login_required
 def add_to_kb(doc_id):
     doc_type = db.get_doc_type(doc_id)
     db.set_kb_status(doc_id, "processing")
@@ -571,6 +585,7 @@ def add_to_kb(doc_id):
 
 
 @app.route("/document/<string:doc_id>/kb-status", methods=["GET"])
+@login_required
 def get_kb_status(doc_id):
     kb_status = db.get_kb_status(doc_id)
     return jsonify({"kb_status": kb_status}), 200
@@ -808,6 +823,7 @@ def _crawl_and_embed_job(url_id, url):
 
 
 @app.route("/query", methods=["POST"])
+@login_required
 def query_kb():
     data = request.get_json()
     query = data["query"]
@@ -832,6 +848,7 @@ def query_kb():
 
 
 @app.route("/test-rag", methods=["POST"])
+@login_required
 def test_rag():
     data = request.get_json()
     query = data.get("query", "").strip()
@@ -876,6 +893,7 @@ def test_rag():
 
 
 @app.route("/config/alpha", methods=["POST"])
+@login_required
 def set_alpha():
     global retrieval_alpha
     data = request.get_json()
@@ -898,6 +916,7 @@ class UploadFileForm(FlaskForm):
 
 
 @app.route("/admin", methods=["GET", "POST"])
+@login_required
 def admin():
     form = UploadFileForm()
 
@@ -955,6 +974,7 @@ def admin():
 
 # Route to extract text from an uploaded document
 @app.route("/extract-text", methods=["POST"])
+@login_required
 def extract_text():
     # wrapper function to thread extraction: Replace with Celery later
 
@@ -1081,11 +1101,13 @@ def extract_text():
 
 
 @app.route("/sitemap", methods=["GET"])
+@login_required
 def sitemap():
     return render_template("sitemap.html", active_page="sitemap")
 
 
 @app.route("/parse", methods=["POST"])
+@login_required
 def parse_urls():
     data = request.get_json()
     urls = data.get("urls", [])
@@ -1107,13 +1129,51 @@ def parse_urls():
 
 
 @app.route("/webpage/<url_id>/status", methods=["GET"])
+@login_required
 def webpage_status(url_id):
     status = db.get_webpage_status(url_id)
     return jsonify(status)
 
 @app.route("/analytics")
+@login_required
 def analytics():
-    return render_template("analytics.html")
+    return render_template("analytics.html", active_page="analytics")
+
+@app.route("/analytics/summary")
+@login_required
+def analytics_summary():
+    days = request.args.get("days", 7, type=int)
+    days = days if days in (7, 30, 90) else 7
+    data = db.get_analytics_summary(days)
+    return jsonify(data)
+
+@app.route("/analytics/bookings")
+@login_required
+def analytics_bookings():
+    days = request.args.get("days", 7, type=int)
+    days = days if days in (7, 30, 90) else 7
+    bookings = db.get_bookings_for_period(days)
+    return jsonify(bookings)
+
+@app.route("/login", methods=["GET", "POST"])
+def login():
+    if request.method == "GET":
+        return render_template("login.html")
+    data = request.get_json()
+    username = (data or {}).get("username", "")
+    password = (data or {}).get("password", "")
+    stored_hash = os.getenv("ADMIN_PASSWORD_HASH", "")
+    if (username == os.getenv("ADMIN_USERNAME", "") and
+            stored_hash and
+            bcrypt.checkpw(password.encode(), stored_hash.encode())):
+        session['logged_in'] = True
+        return jsonify({"ok": True})
+    return jsonify({"message": "Invalid username or password."}), 401
+
+@app.route("/logout")
+def logout():
+    session.pop('logged_in', None)
+    return redirect(url_for('login'))
 
 # AWS S3 Helper Functions
 def _file_exists(resource, bucket, key):
