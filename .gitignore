@@ -2,6 +2,7 @@ venv/
 __pycache__/
 *.pyc
 .env
+.secret_env
 .vscode/
 .DS_Store
 .coverage

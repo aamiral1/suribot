@@ -1,212 +1,109 @@
-# 🧠 RAG Chatbot System for Suri Marketing (In Progress)
+# SuriBot — Grader Setup Guide
 
-This project is a **production-style Retrieval-Augmented Generation (RAG) system** built for [Suri Marketing](http://surimarketing.co.uk/), with a planned future rollout across its clientele.
-
-It includes:
-
-- A **customer-facing chatbot interface** embedded into a website  
-- An **admin dashboard** for managing knowledge ingestion and monitoring the chatbot  
-- A **backend pipeline** that ingests, processes, and serves knowledge to the chatbot - utilising an RAG architecture integrated with a vector database.
-- Preserves **in-dialogue context** across conversations.
-- Utilises industry standard **sales strategies**.
-
-🚧 **Status: Work in Progress**
+SuriBot is a Retrieval-Augmented Generation (RAG) chatbot system built for Suri Marketing, a digital marketing agency in Birmingham. It consists of a customer-facing chatbot widget and an admin dashboard. The admin can upload company documents and website content to the chatbot's knowledge base; the chatbot uses hybrid semantic + keyword search over that knowledge base to generate grounded, context-aware responses.
 
 ---
 
-## 📌 Overview
+## Prerequisites
 
-The goal of this system is to enable:
+- **Python 3.10 or higher**
+- **PostgreSQL 14 or higher** running locally on port 5432
 
-- Accurate, **grounded chatbot responses** using company knowledge  
-- Easy and user-friendly ingestion of different types of documents and website content (through site-map crawling)
-- A simple internal admin dashboard for non-technical users to monitor, configure and manage the chatbot  
-- A scalable and cloud-native architecture, based on AWS, for real-world deployment
+### Installing PostgreSQL
 
----
+- **macOS:** `brew install postgresql@14 && brew services start postgresql@14`
+- **Ubuntu/Debian:** `sudo apt install postgresql && sudo systemctl start postgresql`
+- **Windows:** Download and run the installer from https://www.postgresql.org/download/windows/
 
-## 🧩 System Architecture
+After installation, ensure a default database `postgres` exists with user `postgres`. The app expects the password to be `9999`. You can set this with:
 
-```mermaid
-flowchart TD
-    A[User] --> B[Chatbot UI]
-    B --> C[Backend API]
-
-    C --> D[Knowledge Base]
-    D --> B
-
-    I[Admin Dashboard] --> J[Ingestion Pipeline]
-
-    J --> K[Document Parsing]
-    J --> L[Sitemap Crawling]
-
-    K --> D
-    L --> D
+```bash
+psql -U postgres -c "ALTER USER postgres WITH PASSWORD '9999';"
 ```
 
+If your local Postgres uses different credentials, you can override them via the `DB_*` variables in your `.env` file.
 
 ---
 
-## 🧱 Core Components
+## Setup
 
-### 1. Customer Chatbot Interface
-- Embedded into website
-- Sends user queries to Flask backend
-- Returns responses generated using retrieved knowledge from knowledge database
+### 1. Create and activate a virtual environment
 
----
+```bash
+python -m venv venv
 
-### 2. Admin Dashboard
-Internal interface for managing the system:
+# macOS / Linux
+source venv/bin/activate
 
-- Upload documents and enable sitemap crawling to update knowledge base
-- Monitor document processing status
-- (TODO) analytics and usage insights
-
----
-
-### 3. Backend API (Flask)
-
-Handles:
-- Chat requests (LLM interaction)
-- Document ingestion workflows
-- Status polling
-- Job Queueing using Celery and Redis
-- Communication with AWS
----
-
-### 4. Knowledge Ingestion
-
-Supports multiple sources:
-
-#### 📄 Document Upload
-- Files uploaded via dashboard
-- Stored in AWS S3
-- Metadata stored in Postgres
-
-#### 🌐 Website Crawling (WIP)
-- Async crawler extracts website content
-- Pages treated as documents in the system
-- Stored in AWS S3
-
----
-
-### 5. Processing Pipeline
-```mermaid
-flowchart LR
-    A[Raw Document] --> B[Convert to Images]
-    B --> C[OCR OpenAI Vision]
-    C --> D[Structured Text Output]
-    D --> E[Store in S3]
-    E --> F[TODO: Chunking + Embeddings]
+# Windows
+venv\Scripts\activate
 ```
 
-- Documents converted to images
-- Processed using AI-based OCR
-- Converted into structured, chunk-ready text to be vectorised and stored in knowledge base
+### 2. Install dependencies
 
----
-
-### 6. Storage Layer
-
-#### AWS S3
-- Raw documents
-- Extracted text outputs
-
-#### PostgreSQL
-Stores:
-- Document metadata
-- Source type (document upload/site-map crawl)
-- Document Processing status in ingestion pipeline
-- Storage locations (S3 bucket + key)
-- Error tracking
-
----
-
-### 7. Retrieval Layer (RAG) 🚧
-
-Planned functionality (TO DO):
-
-- Chunk extracted text
-- Generate embeddings
-- Store in vector database (FAISS / pgvector)
-- Retrieve relevant chunks per query
-- Inject into LLM context
-
-This enables:
-- Grounded responses
-- Reduced hallucination
-- Domain-specific answers
-
----
-
-## 🔄 Document Lifecycle
-```mermaid
-stateDiagram-v2
-    [*] --> CREATED
-    CREATED --> PROCESSING
-    PROCESSING --> SUCCESS
-    PROCESSING --> FAILED
-    FAILED --> PROCESSING
+```bash
+pip install -r requirements.txt
 ```
 
-- Document lifecycles are carefully controlled via database state transitions
-- Prevents invalid states and internal errors
+> Note: one dependency (`chunking_evaluation`) is installed directly from GitHub, so you need an internet connection and `git` available.
+
+### 3. Configure environment variables
+
+A pre-configured `.secret_env` file is provided with this submission (uploaded separately on Blackboard). Copy it to `.env`:
+
+```bash
+# macOS / Linux
+cp .secret_env .env
+
+# Windows
+copy .secret_env .env
+```
+
+All API keys and credentials are already filled in — no further configuration needed. API credits have been pre-loaded on all services sufficient for testing purposes.
 
 ---
 
-## Current Features
+## Running the app
 
-- File upload to AWS S3  
-- Metadata tracking in Postgres
-- Document transition state machine implementation 
-- Document status polling API
-- Multi-format support (DOCX, images, PDF, etc.) for document ingestion
-- OpenAI-based text extraction pipeline  
-- Storage of artefacts in AWS S3  
-- Threaded async processing (will be moved to Celery & Redis)  
-- An interactive admin dashboard  
-- Multiple REST API to enable seamless communication between system components
+```bash
+source venv/bin/activate   # Windows: venv\Scripts\activate
+python app.py
+```
+
+The app will start on `http://localhost:5000` in debug mode. The database schema is created automatically on first run.
 
 ---
 
-## Work in Progress
+## Accessing the system
 
-- Vector database integration (core RAG step)  
-- Chunking and embedding pipeline  
-- Retrieval logic for grounding chatbot responses  
-- Replace threading with Celery + Redis
-- Improve multi-format support (DOCX, images, HTML)  
-- Authentication and security  
+| Interface | URL |
+|---|---|
+| Chatbot | http://localhost:5000 |
+| Admin dashboard | http://localhost:5000/admin |
 
----
-
-## 🧠 Design Focus
-
-This project focuses on building the **system around AI**, not just the model:
-
-- Data ingestion  
-- Processing pipelines  
-- Storage architecture  
-- Retrieval mechanisms  
-- User interfaces  
-
-Because in real-world applications, performance depends more on **system design** than the model itself.
+**Admin login credentials:**
+- Username: `admin`
+- Password: `pass`
 
 ---
 
-## 🛠️ Tech Stack
+## What to try
 
-- **Backend:** Flask, Flask-RESTful  
-- **Database:** PostgreSQL (psycopg2 + connection pooling)  
-- **Storage:** AWS S3  
-- **Async (current):** Python threading  
-- **AI/OCR:** OpenAI models  
-- **Parsing:** pdf2image  
-- **Crawler:** crawl4ai  
-- **Planned:** FAISS, Celery & Redis for job processing
+**Chatbot (http://localhost:5000)**
+- Open the chat widget and ask questions. If the knowledge base is empty the chatbot will still respond using its sales persona but without grounded context.
+
+**Admin dashboard (http://localhost:5000/admin)**
+- Upload a document under "Knowledge Base" to populate the knowledge base.
+- Upload a website you would like crawled under sitemap parsing page.
 
 ---
 
-Thanks for reading,
-Aamir.
+## Architecture overview
+
+- **Backend:** Flask + Flask-RESTful (Python)
+- **Database:** PostgreSQL — stores document metadata, chunk data, and processing state
+- **Document storage:** AWS S3 — stores raw uploaded files and extracted text
+- **Vector database:** Pinecone (serverless) — hybrid sparse-dense index for RAG retrieval
+- **AI/OCR:** OpenAI GPT-4o — text extraction from uploaded documents and chat response generation
+- **Retrieval:** Hybrid search combining BM25 keyword scoring and OpenAI `text-embedding-3-small` semantic embeddings
+- **Chatbot frontend:** Vanilla JS widget embedded in the Flask-served HTML page
