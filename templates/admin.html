@@ -6,10 +6,6 @@
 
     <div class="topbar">
       <div class="topbar__title">Knowledge Base</div>
-      <div class="topbar__pill">
-        <span class="topbar__pill-dot"></span>
-        Chatbot Online
-      </div>
     </div>
 
     <div class="content">
@@ -108,66 +104,10 @@
 
       </div><!-- /kb-section -->
 
-      <!-- Retrieval Settings -->
-      <div class="kb-section" style="margin-top: 24px;">
-        <div class="kb-header">
-          <div>
-            <div class="section-head">
-              <h2>Retrieval Settings</h2>
-              <span class="tag tag--purple">✦ Hybrid Search</span>
-            </div>
-            <p class="kb-desc">Control the balance between semantic (meaning-based) and keyword search when retrieving documents from the knowledge base.</p>
-          </div>
-        </div>
-
-        <div class="alpha-slider-row">
-          <label for="alpha-slider">Retrieval Balance</label>
-          <div class="slider-labels">
-            <span>Semantic</span>
-            <span>Keyword</span>
-          </div>
-          <input type="range" id="alpha-slider" min="0" max="1" step="0.1" value="0.5" />
-          <div class="slider-value-row">
-            <span class="slider-value-label">Current value: <strong id="alpha-value">0.5</strong></span>
-            <span id="alpha-save-status" class="status-text"></span>
-          </div>
-        </div>
-      </div><!-- /retrieval-settings -->
-
     </div><!-- /content -->
   </main>
 {% endblock %}
 
 {% block scripts %}
 <script type="module" src="{{ url_for('static', filename='js/admin.js') }}"></script>
-<script>
-  const slider = document.getElementById('alpha-slider');
-  const alphaDisplay = document.getElementById('alpha-value');
-  const alphaStatus = document.getElementById('alpha-save-status');
-
-  slider.addEventListener('input', () => {
-    alphaDisplay.textContent = slider.value;
-  });
-
-  slider.addEventListener('change', async () => {
-    const alpha = parseFloat(slider.value);
-    alphaDisplay.textContent = alpha;
-    alphaStatus.textContent = 'Saving...';
-    try {
-      const res = await fetch('/config/alpha', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ alpha }),
-      });
-      if (res.ok) {
-        alphaStatus.textContent = 'Saved';
-        setTimeout(() => { alphaStatus.textContent = ''; }, 2000);
-      } else {
-        alphaStatus.textContent = 'Error saving';
-      }
-    } catch {
-      alphaStatus.textContent = 'Error saving';
-    }
-  });
-</script>
 {% endblock %}

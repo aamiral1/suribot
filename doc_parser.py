@@ -1,6 +1,5 @@
 from pdf2image import convert_from_path
 import os
-import re
 import datetime
 from custom_exceptions import ExtractionTimeOut
 from docx import Document
@@ -262,7 +261,6 @@ def extract_from_pdf(client, pdf_file_path, images_dir_name, ocr_prompt=None):
     # If structured mode was requested but LLM didn't add any [HEADING] markers,
     # fall back to plain-text heuristics on the extracted content.
     if ocr_prompt is not None and "[HEADING]" not in combined:
-        print("[doc_parser] No [HEADING] markers in PDF LLM output — applying plain-text heuristics.")
         combined = _apply_plain_text_heading_heuristics(combined)
 
     return combined
@@ -325,8 +323,6 @@ def extract_from_docx_structured(file_path):
             lines.append(text)
 
     if not heading_found:
-        print(f"[doc_parser] WARNING: No heading-style paragraphs found in {file_path}. "
-              "Falling back to plain-text heuristics.")
         return _apply_plain_text_heading_heuristics("\n\n".join(lines))
 
     return "\n\n".join(lines)
@@ -359,8 +355,7 @@ def _apply_plain_text_heading_heuristics(text):
             result.append(line)
 
     if not heading_found:
-        print("[doc_parser] WARNING: No headings detected by any heuristic. "
-              "Document will be treated as a single parent section.")
+        pass
 
     return "\n".join(result)
 
@@ -386,7 +381,6 @@ def extract_from_md_structured(file_path):
 
 def extract_doc_info(client, file_path):
     ext = os.path.splitext(file_path)[1].lower()
-    print("file type: ", ext)
 
     if ext == ".pdf":
         images_dir = os.path.join(os.path.dirname(file_path), "extracted_images")

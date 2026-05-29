@@ -1,5 +1,4 @@
 import re
-from collections import Counter
 
 
 CTA_PHRASES = {
@@ -23,40 +22,3 @@ def clean_markdown(text: str) -> str:
             continue
         cleaned.append(line)
     return "\n".join(cleaned)
-
-
-def detect_dominant_level(markdown: str) -> str:
-    """Returns the dominant header tag string (e.g. 'H2', 'H3') or 'None' if no headers found."""
-    header_pattern = re.compile(r'^(#{2,4})\s+', re.MULTILINE)
-    matches = header_pattern.findall(markdown)
-    if not matches:
-        return "None"
-    level_counts = Counter(len(h) for h in matches)
-    dominant = level_counts.most_common(1)[0][0]
-    return f"H{dominant}"
-
-
-def markdown_to_sections(markdown: str) -> str:
-    """
-    Converts markdown headers to [HEADING] markers at the dominant header level.
-    The dominant level is whichever of ##/###/#### appears most frequently.
-    Headers at other levels have their # symbols stripped (become plain text).
-    If no headers are found, returns markdown unchanged.
-    """
-    header_pattern = re.compile(r'^(#{2,4})\s+(.+)$', re.MULTILINE)
-    matches = header_pattern.findall(markdown)
-
-    if not matches:
-        return markdown
-
-    level_counts = Counter(len(hashes) for hashes, _ in matches)
-    dominant_level = level_counts.most_common(1)[0][0]
-
-    def replace_header(m):
-        hashes = m.group(1)
-        title = m.group(2).strip()
-        if len(hashes) == dominant_level:
-            return f'[HEADING] {title}'
-        return title
-
-    return header_pattern.sub(replace_header, markdown)

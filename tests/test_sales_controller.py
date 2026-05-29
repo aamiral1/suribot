@@ -173,7 +173,7 @@ class TestApplyGuardrailsSalesTurn:
         out = _valid_output("ASK_SITUATION_QUESTION")
         lead = SalesController.create_new_profile()
         result = sc.apply_guardrails(out, lead, sales_turn=3, threshold=3)
-        assert result["next_action"] == "OFFER_BOOKING"
+        assert result["next_action"] == "OFFER_AND_COLLECT"
 
     def test_threshold_reached_but_booking_already_offered_no_override(self, sc):
         out = _valid_output("ASK_SITUATION_QUESTION")
@@ -199,7 +199,8 @@ class TestApplyGuardrailsAutoFlags:
     def test_booking_action_sets_requires_booking_tool_true(self, sc):
         out = _valid_output("OFFER_AVAILABLE_SLOTS")
         out["requires_booking_tool"] = False
-        result = sc.apply_guardrails(out, {}, sales_turn=0)
+        lead = {'contact_name': 'James Carter', 'contact_email': 'james@example.com'}
+        result = sc.apply_guardrails(out, lead, sales_turn=0)
         assert result["requires_booking_tool"] is True
 
     def test_non_rag_non_booking_action_flags_remain_false(self, sc):
@@ -209,7 +210,7 @@ class TestApplyGuardrailsAutoFlags:
         assert result["requires_booking_tool"] is False
 
     def test_offer_booking_auto_flips_booking_offered(self, sc):
-        out = _valid_output("OFFER_BOOKING")
+        out = _valid_output("OFFER_AND_COLLECT")
         result = sc.apply_guardrails(out, {}, sales_turn=0)
         assert result["lead_profile_updates"].get("booking_offered") is True
 

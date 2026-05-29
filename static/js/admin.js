@@ -1,4 +1,3 @@
-// ── Elements ─────────────────────────────────────────────────
 const form           = document.getElementById('upload_form');
 const fileInput      = document.getElementById('file-input');
 const uploadBtn      = document.getElementById('upload-btn');
@@ -21,7 +20,6 @@ let interval    = null;
 const queueItems = new Map();
 
 
-// ── File input triggers ───────────────────────────────────────
 uploadBtn.addEventListener('click', () => fileInput.click());
 dropZone.addEventListener('click',  () => fileInput.click());
 
@@ -30,7 +28,6 @@ fileInput.addEventListener('change', () => {
 });
 
 
-// ── Drag and drop ─────────────────────────────────────────────
 dropZone.addEventListener('dragover', (e) => {
   e.preventDefault();
   dropZone.classList.add('drag-over');
@@ -54,7 +51,6 @@ dropZone.addEventListener('drop', (e) => {
 });
 
 
-// ── Form submission ───────────────────────────────────────────
 form.addEventListener('submit', async (e) => {
   e.preventDefault();
   await submitForm();
@@ -68,7 +64,6 @@ async function submitForm() {
     const data = await res.json();
 
     if (!res.ok || data.status !== 'ok') {
-      console.log('Upload failed:', data.error);
       return;
     }
 
@@ -79,15 +74,13 @@ async function submitForm() {
     const fileSize = formatSize(file?.size);
 
     addQueueItem(latestDocId, fileName, fileSize);
-    console.log('Uploaded:', data);
 
   } catch (err) {
-    console.error(err);
+    // upload failed silently
   }
 }
 
 
-// ── Queue item management ─────────────────────────────────────
 function fileIcon(name) {
   const ext = name.split('.').pop().toLowerCase();
   if (ext === 'pdf')                        return { emoji: '📄', cls: 'qi-icon--pdf' };
@@ -145,33 +138,21 @@ function formatSize(bytes) {
 }
 
 
-// ── API helpers ───────────────────────────────────────────────
 async function fetchDocStatus(docId) {
   const res  = await fetch(`/document/${docId}/status`);
   const data = await res.json();
-
-  if (!res.ok) {
-    console.log('Problem fetching document status');
-    return null;
-  }
-
+  if (!res.ok) return null;
   return data;
 }
 
 async function fetchExtractedText(docId) {
   const res  = await fetch(`/document/${docId}/text`);
   const data = await res.json();
-
-  if (!res.ok) {
-    console.log('Problem fetching extracted text');
-    return null;
-  }
-
+  if (!res.ok) return null;
   return data;
 }
 
 
-// ── Polling ───────────────────────────────────────────────────
 function startPolling(docId) {
   if (interval) clearInterval(interval);
 
@@ -201,6 +182,7 @@ function startPolling(docId) {
 
       if (status === 'success') {
         clearInterval(interval);
+        statusField.textContent = '';
 
         if (!data.has_text) {
           statusField.textContent = 'error (file not found in storage)';
@@ -217,7 +199,6 @@ function startPolling(docId) {
         addToKbBtn.style.display = 'inline-flex';
       }
     } catch (err) {
-      console.error('[polling] error:', err);
       statusField.textContent = 'error';
       clearInterval(interval);
     }
@@ -225,7 +206,6 @@ function startPolling(docId) {
 }
 
 
-// ── Documents table ───────────────────────────────────────────
 const typeIconMap = {
   PDF:  { emoji: '📄', bg: 'rgba(239,68,68,0.1)' },
   DOCX: { emoji: '📝', bg: 'rgba(59,130,246,0.1)' },
@@ -250,7 +230,6 @@ async function loadDocumentsTable() {
     const data = await res.json();
 
     if (!res.ok) {
-      console.log('Failed to load documents:', data.error);
       return;
     }
 
@@ -290,7 +269,7 @@ async function loadDocumentsTable() {
     statStorageUsed.innerHTML   = formatSize(totalBytes).replace(/\s(\S+)$/, '<span style="font-size:16px;font-weight:500">$1</span>');
 
   } catch (err) {
-    console.error('Error loading documents table:', err);
+    // table load failed
   }
 }
 
@@ -307,14 +286,12 @@ refreshDocsBtn.addEventListener('click', () => {
 loadDocumentsTable();
 
 
-// ── Add to Knowledge Base button ──────────────────────────────
 addToKbBtn.addEventListener('click', async () => {
   try {
     const res  = await fetch(`/document/${latestDocId}/add-to-kb`, { method: 'POST' });
     const data = await res.json();
 
     if (!res.ok) {
-      console.log('Failed to add to KB:', data.message);
       return;
     }
 
@@ -339,25 +316,22 @@ addToKbBtn.addEventListener('click', async () => {
           addToKbBtn.textContent = '✗ Failed — Retry';
         }
       } catch (pollErr) {
-        console.error('KB status poll error:', pollErr);
+        clearInterval(kbPollInterval);
       }
     }, 1000);
 
   } catch (err) {
-    console.error(err);
+    // add to KB failed
   }
 });
 
 
-// ── Extract button ────────────────────────────────────────────
 extractBtn.addEventListener('click', async () => {
   if (!latestDocId) {
     statusField.textContent = 'upload a file first';
     return;
   }
   try {
-    console.log('Extracting doc:', latestDocId);
-
     const res = await fetch('/extract-text', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -367,7 +341,6 @@ extractBtn.addEventListener('click', async () => {
     const data = await res.json();
 
     if (!res.ok) {
-      console.log(data.message || data.error || 'Failed to start extraction');
       statusField.textContent = 'error';
       return;
     }
@@ -382,11 +355,9 @@ extractBtn.addEventListener('click', async () => {
       return;
     }
 
-    console.log('Unexpected response:', data);
     statusField.textContent = 'error';
 
   } catch (err) {
-    console.error(err);
     statusField.textContent = 'error';
   }
 });

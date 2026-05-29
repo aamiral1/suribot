@@ -1,41 +1,14 @@
 (function () {
-  /* ─── Set DEMO_MODE = false and point the fetch calls to your
-         Flask routes once they exist:
-           GET /analytics/summary?days=N
-           GET /analytics/bookings                         ─── */
-  const DEMO_MODE = false;
- 
   let range = 7, chart = null;
- 
+
   const fmt = n => n == null ? '—' : Number(n).toLocaleString();
   const pct = n => n == null ? '—' : Number(n).toFixed(1) + '%';
   const esc = s => String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
   const ago = iso => { const s=(Date.now()-new Date(iso))/1000; return s<60?'Just now':s<3600?Math.floor(s/60)+'m ago':s<86400?Math.floor(s/3600)+'h ago':Math.floor(s/86400)+'d ago'; };
   const fmt8 = iso => new Date(iso).toLocaleString('en-GB',{day:'2-digit',month:'short',year:'numeric',hour:'2-digit',minute:'2-digit'});
- 
-  /* Demo data */
-  function demoSummary(days) {
-    const c = {7:148,30:612,90:1847}[days];
-    const m = Math.round(c*0.091);
-    const daily = Array.from({length:days},(_,i)=>{
-      const d=new Date(); d.setDate(d.getDate()-(days-1-i));
-      return {date:d.toISOString().split('T')[0], conversations:Math.round((c/days)*(0.5+Math.random()*0.9))};
-    });
-    return {conversations:c, meetings:m, messages:c*5, cvr:(m/c*100).toFixed(1),
-      conv_trend:'+12%', mtg_trend:'+5%', cvr_trend:'+2.1pp', msg_trend:'+8%',
-      funnel:{visitors:Math.round(c*1.32), sent:c, engaged:Math.round(c*0.58), booked:m}, daily};
-  }
-  function demoBookings() {
-    const names=['James Whitfield','Priya Nair','Conor Murphy','Aisha Patel','Tom Eriksen','Lucia Ferreira'];
-    const domains=['gmail.com','outlook.com','yahoo.co.uk','hotmail.com'];
-    const statuses=['confirmed','confirmed','confirmed','pending','cancelled','confirmed'];
-    const now=Date.now();
-    return names.map((n,i)=>({name:n, email:n.split(' ')[0].toLowerCase()+'@'+domains[i%domains.length],
-      booked_at:new Date(now-i*14*3600000).toISOString(), meeting_time:new Date(now+(3-i)*24*3600000).toISOString(), status:statuses[i]}));
-  }
- 
-  async function fetchSummary(d) { return DEMO_MODE ? demoSummary(d) : fetch(`/analytics/summary?days=${d}`).then(r=>r.json()); }
-  async function fetchBookings(d)  { return DEMO_MODE ? demoBookings()  : fetch(`/analytics/bookings?days=${d}`).then(r=>r.json()); }
+
+  async function fetchSummary(d) { return fetch(`/analytics/summary?days=${d}`).then(r=>r.json()); }
+  async function fetchBookings(d) { return fetch(`/analytics/bookings?days=${d}`).then(r=>r.json()); }
  
   function renderKPIs(d,days) {
     document.getElementById('kpi-conversations').textContent=fmt(d.conversations);

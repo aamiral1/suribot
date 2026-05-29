@@ -2,7 +2,7 @@ from crawl4ai import AsyncWebCrawler, CrawlerRunConfig
 from crawl4ai.markdown_generation_strategy import DefaultMarkdownGenerator
 from crawl4ai.content_filter_strategy import PruningContentFilter
 import asyncio
-from web_chunker import clean_markdown, markdown_to_sections, detect_dominant_level
+from web_chunker import clean_markdown
 
 async def crawl_url(url: str) -> str:
     config = CrawlerRunConfig(

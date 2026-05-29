@@ -1,4 +1,5 @@
 import json
+import os
 from datetime import date, timedelta
 
 import psycopg2 as pg2
@@ -17,22 +18,18 @@ class Database:
         self.pool = ThreadedConnectionPool(
             minconn=1,
             maxconn=10,
-            host="localhost",
-            dbname="postgres",
-            user="postgres",
-            password="9999",
-            port=5432
+            host=os.environ.get("DB_HOST", "localhost"),
+            dbname=os.environ.get("DB_NAME", "postgres"),
+            user=os.environ.get("DB_USER", "postgres"),
+            password=os.environ.get("DB_PASSWORD", "9999"),
+            port=int(os.environ.get("DB_PORT", "5432")),
         )
-
-        # pool.getconn()
-        # pool.putconn(conn_name)
 
     def init_schema(self):
         connection = self._get_conn()
         cursor = connection.cursor()
 
         try:
-            # create table with appropriate columns
             create_table_command = f"""
                 DO $$ 
                 BEGIN 
@@ -106,7 +103,7 @@ class Database:
                     in_kb          BOOLEAN DEFAULT FALSE,
                     error_msg      TEXT,
                     s3_text_bucket TEXT,
-                    s3_text_key    TEXT
+                    s3_text_kxfey    TEXT
                 );
 
                 CREATE TABLE IF NOT EXISTS webpage_chunks (
@@ -134,6 +131,11 @@ class Database:
                     ON document_chunks(doc_id);
                 CREATE INDEX IF NOT EXISTS idx_doc_chunks_chunk
                     ON document_chunks(doc_id, chunk_id);
+
+                CREATE TABLE IF NOT EXISTS sessions (
+                    session_id TEXT PRIMARY KEY,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                );
 
                 CREATE TABLE IF NOT EXISTS conversation_messages (
                     id SERIAL PRIMARY KEY,
@@ -167,20 +169,96 @@ class Database:
                 CREATE INDEX IF NOT EXISTS idx_bookings_email
                     ON bookings(email);
 
+                
+                DELETE FROM document_chunks
+                    WHERE doc_id NOT IN (SELECT doc_id FROM {self.doc_table});
+
+                DELETE FROM webpage_chunks
+                    WHERE url_id NOT IN (SELECT url_id FROM webpages);
+
+                DELETE FROM conversation_messages
+                    WHERE session_id IS NOT NULL
+                    AND session_id NOT IN (SELECT session_id FROM sessions);
+
+                DELETE FROM lead_profiles
+                    WHERE session_id NOT IN (SELECT session_id FROM sessions);
+
+                DELETE FROM bookings
+                    WHERE session_id NOT IN (SELECT session_id FROM sessions);
+
+                DO $$
+                BEGIN
+                    ALTER TABLE document_chunks
+                        ADD CONSTRAINT fk_doc_chunks_doc
+                        FOREIGN KEY (doc_id) REFERENCES {self.doc_table}(doc_id) ON DELETE CASCADE;
+                EXCEPTION
+                    WHEN duplicate_object THEN NULL;
+                END $$;
+
+                DO $$
+                BEGIN
+                    ALTER TABLE webpage_chunks
+                        ADD CONSTRAINT fk_webpage_chunks_url
+                        FOREIGN KEY (url_id) REFERENCES webpages(url_id) ON DELETE CASCADE;
+                EXCEPTION
+                    WHEN duplicate_object THEN NULL;
+                END $$;
+
+                DO $$
+                BEGIN
+                    ALTER TABLE conversation_messages
+                        ADD CONSTRAINT fk_conv_messages_session
+                        FOREIGN KEY (session_id) REFERENCES sessions(session_id) ON DELETE CASCADE;
+                EXCEPTION
+                    WHEN duplicate_object THEN NULL;
+                END $$;
+
+                DO $$
+                BEGIN
+                    ALTER TABLE lead_profiles
+                        ADD CONSTRAINT fk_lead_profiles_session
+                        FOREIGN KEY (session_id) REFERENCES sessions(session_id) ON DELETE CASCADE;
+                EXCEPTION
+                    WHEN duplicate_object THEN NULL;
+                END $$;
+
+                DO $$
+                BEGIN
+                    ALTER TABLE bookings
+                        ADD CONSTRAINT fk_bookings_session
+                        FOREIGN KEY (session_id) REFERENCES sessions(session_id) ON DELETE CASCADE;
+                EXCEPTION
+                    WHEN duplicate_object THEN NULL;
+                END $$;
+
             """
 
             cursor.execute(create_table_command)
 
             connection.commit()
-        except Exception as e:
+        except Exception:
             connection.rollback()
-            print(e)
             raise
         finally:
             cursor.close()
             self._put_conn(connection)
 
-# records a message interaction
+    def ensure_session(self, session_id):
+        connection = self._get_conn()
+        cursor = connection.cursor()
+        try:
+            cursor.execute(
+                "INSERT INTO sessions (session_id) VALUES (%s) ON CONFLICT (session_id) DO NOTHING",
+                (session_id,)
+            )
+            connection.commit()
+        except Exception as e:
+            connection.rollback()
+            raise Exception(f"Error ensuring session: {e}")
+        finally:
+            cursor.close()
+            self._put_conn(connection)
+
     def save_message(self, session_id, role, content, used_action=None):
         connection = self._get_conn()
         cursor = connection.cursor()
@@ -210,7 +288,6 @@ class Database:
             cursor.close()
             self._put_conn(connection)
 
-# get conversation history for a particular session_id
     def get_conversation_history(self, session_id, limit=10):
         connection = self._get_conn()
         cursor = connection.cursor()
@@ -242,7 +319,6 @@ class Database:
             for row in reversed(rows)
         ]
 
-# returns total number of assistant turns for a session (used for sales_turn threshold)
     def get_sales_turn_count(self, session_id):
         connection = self._get_conn()
         cursor = connection.cursor()
@@ -262,7 +338,6 @@ class Database:
             cursor.close()
             self._put_conn(connection)
 
-# gets last used actions for a particular session_id
     def get_last_actions(self, session_id, limit=3):
         connection = self._get_conn()
         cursor = connection.cursor()
@@ -289,7 +364,6 @@ class Database:
         return [row[0] for row in rows]
 
 
-# retrieves a lead profile for a particular session_id
     def get_lead_profile(self, session_id):
         connection = self._get_conn()
         cursor = connection.cursor()
@@ -318,7 +392,6 @@ class Database:
             cursor.close()
             self._put_conn(connection)
 
-# saves a lead profile
     def save_lead_profile(self, session_id, profile):
         connection = self._get_conn()
         cursor = connection.cursor()
@@ -344,7 +417,6 @@ class Database:
             cursor.close()
             self._put_conn(connection)
 
-# creates record for a document with CREATED as initial value
     def create(self, source_type, name, size, type, upload_date, s3_file_bucket, s3_file_key, s3_extracted_text_bucket, s3_extracted_text_key, doc_type="knowledge_base", doc_structure="free_flow"):
         connection = self._get_conn()
         cursor = connection.cursor()
@@ -390,7 +462,6 @@ class Database:
 
         return doc_id
     
-    # return s3 file bucket and key for a given doc id
     def get_file_path(self, doc_id):
         connection = self._get_conn()
         cursor = connection.cursor()
@@ -417,7 +488,6 @@ class Database:
 
         return [s3_file_bucket, s3_file_key]
 
-    # retrieves extraction status for a given doc id
     def get_status(self, doc_id):
         connection = self._get_conn()
         cursor = connection.cursor()
@@ -443,7 +513,6 @@ class Database:
 
         return status
 
-    # changes status for a given doc_id according to state machine diagram
     def transition_status(self, doc_id, new_status: DocumentStatus):
         connection = self._get_conn()
         cursor = connection.cursor()
@@ -492,7 +561,6 @@ class Database:
             cursor.close()
             self._put_conn(connection)
 
-    # sets S3 paths of extracted text for a given doc id
     def set_extraction_text_path(self, doc_id, s3_extracted_text_bucket, s3_extracted_text_key):
         connection = self._get_conn()
         cursor = connection.cursor()
@@ -509,7 +577,6 @@ class Database:
             cursor.close()
             self._put_conn(connection)
 
-    # retrieves S3 extracted text paths for a given doc id
     def get_extracted_text_file_path(self, doc_id):
         connection = self._get_conn()
         cursor = connection.cursor()
@@ -536,7 +603,6 @@ class Database:
 
         return [s3_bucket, s3_key]
 
-    # returns all rows from the documents table
     def get_all_documents(self):
         connection = self._get_conn()
         cursor = connection.cursor()
@@ -555,7 +621,6 @@ class Database:
 
         return rows
 
-    # marks a document as added to the knowledge base
     def set_in_kb(self, doc_id):
         connection = self._get_conn()
         cursor = connection.cursor()
@@ -572,7 +637,6 @@ class Database:
             cursor.close()
             self._put_conn(connection)
 
-    # retrieves kb_status for a given doc id
     def get_kb_status(self, doc_id):
         connection = self._get_conn()
         cursor = connection.cursor()
@@ -594,7 +658,6 @@ class Database:
             cursor.close()
             self._put_conn(connection)
 
-    # sets kb_status for a given doc id
     def set_kb_status(self, doc_id, status: str):
         connection = self._get_conn()
         cursor = connection.cursor()
@@ -611,7 +674,6 @@ class Database:
             cursor.close()
             self._put_conn(connection)
 
-    # returns doc_type for a given doc_id
     def get_doc_type(self, doc_id):
         connection = self._get_conn()
         cursor = connection.cursor()
@@ -631,7 +693,6 @@ class Database:
             cursor.close()
             self._put_conn(connection)
 
-    # returns doc_structure ('free_flow' or 'structured') for a given doc_id
     def get_doc_structure(self, doc_id):
         connection = self._get_conn()
         cursor = connection.cursor()
@@ -651,66 +712,6 @@ class Database:
             cursor.close()
             self._put_conn(connection)
 
-    # bulk inserts chunk rows into document_chunks
-    def insert_chunks(self, doc_id, rows):
-        connection = self._get_conn()
-        cursor = connection.cursor()
-
-        command = """INSERT INTO document_chunks
-            (doc_id, chunk_id, text, heading)
-            VALUES (%s, %s, %s, %s)"""
-
-        try:
-            cursor.executemany(
-                command,
-                [
-                    (
-                        doc_id,
-                        row["chunk_id"],
-                        row["text"],
-                        row.get("heading"),
-                    )
-                    for row in rows
-                ],
-            )
-            connection.commit()
-        except Exception as e:
-            connection.rollback()
-            raise Exception(f"Error: {e}")
-        finally:
-            cursor.close()
-            self._put_conn(connection)
-
-    # returns all chunks across documents and webpages (used to rebuild BM25 encoder)
-    def get_all_chunks(self):
-        connection = self._get_conn()
-        cursor = connection.cursor()
-
-        command = """
-            SELECT doc_id, chunk_id, text FROM document_chunks
-            UNION ALL
-            SELECT url_id, chunk_id, text FROM webpage_chunks
-        """
-
-        try:
-            cursor.execute(command)
-            rows = cursor.fetchall()
-            return [
-                {
-                    "doc_id": row[0],
-                    "chunk_id": row[1],
-                    "text": row[2],
-                }
-                for row in rows
-            ]
-        except Exception as e:
-            connection.rollback()
-            raise Exception(f"Error: {e}")
-        finally:
-            cursor.close()
-            self._put_conn(connection)
-
-    # creates a record for a crawled URL
     def create_url(self, url, domain):
         connection = self._get_conn()
         cursor = connection.cursor()
@@ -847,36 +848,6 @@ class Database:
         finally:
             cursor.close()
             self._put_conn(connection)
-
-    def insert_webpage_chunks(self, url_id, rows):
-        connection = self._get_conn()
-        cursor = connection.cursor()
-
-        command = """INSERT INTO webpage_chunks
-            (url_id, chunk_id, text, heading)
-            VALUES (%s, %s, %s, %s)"""
-
-        try:
-            cursor.executemany(
-                command,
-                [
-                    (
-                        url_id,
-                        row["chunk_id"],
-                        row["text"],
-                        row.get("heading"),
-                    )
-                    for row in rows
-                ],
-            )
-            connection.commit()
-        except Exception as e:
-            connection.rollback()
-            raise Exception(f"Error: {e}")
-        finally:
-            cursor.close()
-            self._put_conn(connection)
-            
 
     def save_booking(self, session_id, event_id, slot_iso, name, email) -> str:
         connection = self._get_conn()
@@ -1069,7 +1040,6 @@ class Database:
             for row in rows
         ]
 
-    # private helper functions
     def _get_conn(self):
         return self.pool.getconn()
 

@@ -1,6 +1,13 @@
 
+function generateUUID() {
+    if (crypto.randomUUID) return crypto.randomUUID();
+    return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function(c) {
+        const r = Math.random() * 16 | 0;
+        return (c === 'x' ? r : (r & 0x3 | 0x8)).toString(16);
+    });
+}
 if (!sessionStorage.getItem('session_id')) {
-    sessionStorage.setItem('session_id', crypto.randomUUID());
+    sessionStorage.setItem('session_id', generateUUID());
 }
 const sessionId = sessionStorage.getItem('session_id');
 
@@ -8,14 +15,11 @@ const messageSendButton = document.querySelector(".vb .vb-footer button.vb-send"
 const inputBar = document.querySelector(".vb .vb-footer input.vb-input");
 const messageWindow = document.querySelector(".vb-messages")
 
-const BASE = "http://127.0.0.1:5000/"
-
 async function addMessage(message, role){
     const row = document.createElement("div");
     row.classList.add("vb-msg-row");
 
     if (role == "agent"){
-        // add avatar
         const avatar = document.createElement("div");
         avatar.classList.add("vb-msg-avatar");
         avatar.setAttribute('aria-hidden', true);
@@ -28,7 +32,6 @@ async function addMessage(message, role){
         row.classList.add("user");
     }
 
-    // chat bubble
     const bubble = document.createElement("div");
     bubble.classList.add("vb-bubble", role);
     if (role === 'agent' && typeof marked !== 'undefined') {
@@ -40,9 +43,30 @@ async function addMessage(message, role){
     row.appendChild(bubble);
 
     messageWindow.append(row);
-
-    // scroll to top
     messageWindow.scrollTop = messageWindow.scrollHeight;
+}
+
+function showTypingIndicator() {
+    const row = document.createElement("div");
+    row.classList.add("vb-msg-row", "vb-typing-row");
+
+    const avatar = document.createElement("div");
+    avatar.classList.add("vb-msg-avatar");
+    avatar.setAttribute("aria-hidden", true);
+    avatar.textContent = "✦";
+
+    const bubble = document.createElement("div");
+    bubble.classList.add("vb-bubble", "agent");
+
+    const loader = document.createElement("div");
+    loader.classList.add("loader");
+    bubble.appendChild(loader);
+
+    row.appendChild(avatar);
+    row.appendChild(bubble);
+    messageWindow.appendChild(row);
+    messageWindow.scrollTop = messageWindow.scrollHeight;
+    return row;
 }
 
 async function sendMessage(){
@@ -51,17 +75,15 @@ async function sendMessage(){
     if(!input){
         return;
     }
-    // console.log(input);
 
     addMessage(input, "user");
     inputBar.value = "";
+    messageSendButton.disabled = true;
 
-    // TESTING - REMOVE LATER
-    // addMessage("How can I help you?", "agent");
+    const typingRow = showTypingIndicator();
 
-    // POST REQUEST TESTING
     try {
-        const res = await fetch(BASE + '/api', {
+        const res = await fetch('/api', {
             method: "POST",
             headers: {
                 "Content-Type": "application/json"
@@ -70,20 +92,27 @@ async function sendMessage(){
         });
         const data = await res.json();
 
+        typingRow.remove();
+
         if (!res.ok) {
-            console.log(data.description);
             return;
         }
         const gpt_response = data['response'];
 
-        console.log("GPT: " + gpt_response);
-
         addMessage(gpt_response, "agent");
 
     } catch (error) {
-        console.log(error);
+        typingRow.remove();
+    } finally {
+        messageSendButton.disabled = false;
     }
 }
 
 
 messageSendButton.addEventListener("click", sendMessage);
+
+const ctaButton = document.querySelector(".vb-cta");
+ctaButton.addEventListener("click", () => {
+    inputBar.value = "I want to book a free discovery call";
+    sendMessage();
+});

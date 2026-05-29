@@ -6,10 +6,6 @@
 
     <div class="topbar">
       <div class="topbar__title">Sitemap Parser</div>
-      <div class="topbar__pill">
-        <span class="topbar__pill-dot"></span>
-        Chatbot Online
-      </div>
     </div>
 
     <div class="content">
@@ -210,7 +206,8 @@
               failed++;
             }
           } catch (e) {
-            console.error('Poll error for', url_id, e);
+            pending.delete(url_id);
+            failed++;
           }
         }
 

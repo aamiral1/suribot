@@ -1,4 +1,4 @@
-/* ── Variables ─────────────────────────────────────────────── */
+/* Variables */
     :root {
       --c-bg:         #0d0d14;
       --c-surface:    #13131f;
@@ -39,7 +39,7 @@
       height: 100vh;
     }
  
-    /* ── Sidebar ───────────────────────────────────────────────── */
+    /* Sidebar */
     .sidebar {
       width: 240px;
       background: var(--c-surface);
@@ -62,11 +62,10 @@
  
     .brand-icon {
       width: 34px; height: 34px;
-      background: linear-gradient(135deg, var(--c-purple), var(--c-purple-l));
+      background: var(--c-purple);
       border-radius: 10px;
       display: flex; align-items: center; justify-content: center;
       font-size: 15px; flex-shrink: 0;
-      box-shadow: 0 4px 14px rgba(124,58,237,0.4);
     }
  
     .brand-name { font-weight: 700; font-size: 14px; color: var(--c-text); line-height: 1.1; }
@@ -143,7 +142,7 @@
     .user-name { font-size: 13px; font-weight: 500; color: var(--c-text); line-height: 1.2; }
     .user-role { font-size: 10.5px; color: var(--c-text-muted); }
  
-    /* ── Main ──────────────────────────────────────────────────── */
+    /* Main */
     .main { flex: 1; overflow-y: auto; height: 100vh; }
     .main::-webkit-scrollbar { width: 4px; }
     .main::-webkit-scrollbar-track { background: transparent; }
@@ -152,8 +151,7 @@
     .topbar {
       position: sticky;
       top: 0;
-      background: rgba(13,13,20,0.88);
-      backdrop-filter: blur(12px);
+      background: var(--c-bg);
       border-bottom: 1px solid var(--c-border);
       padding: 14px 28px;
       display: flex;
@@ -181,18 +179,12 @@
       width: 6px; height: 6px;
       background: var(--c-green);
       border-radius: 50%;
-      animation: live-pulse 2s ease-in-out infinite;
     }
  
-    @keyframes live-pulse {
-      0%, 100% { opacity: 1; transform: scale(1); }
-      50%       { opacity: 0.4; transform: scale(1.5); }
-    }
- 
-    /* ── Content ───────────────────────────────────────────────── */
+    /* Content */
     .content { padding: 28px; display: flex; flex-direction: column; gap: 24px; }
  
-    /* ── Stat cards ────────────────────────────────────────────── */
+    /* Stat cards */
     .stats-row {
       display: grid;
       grid-template-columns: repeat(2, 1fr);
@@ -221,7 +213,7 @@
     .stat-value { font-size: 32px; font-weight: 800; color: var(--c-text); margin: 6px 0 4px; line-height: 1; }
     .stat-sub   { font-size: 11.5px; color: var(--c-text-muted); }
  
-    /* ── KB section ────────────────────────────────────────────── */
+    /* KB section */
     .kb-section {
       background: var(--c-surface);
       border: 1px solid var(--c-border);
@@ -266,17 +258,16 @@
       font-weight: 600;
       cursor: pointer;
       border: none;
-      background: linear-gradient(135deg, var(--c-purple-d), var(--c-purple));
+      background: var(--c-purple);
       color: #fff;
-      box-shadow: 0 4px 14px rgba(124,58,237,0.35);
-      transition: all 0.15s;
+      transition: background 0.15s;
       flex-shrink: 0;
     }
+
+    .btn--primary:hover  { background: #6d28d9; }
+    .btn--primary:active { background: var(--c-purple-d); }
  
-    .btn--primary:hover  { transform: translateY(-1px); box-shadow: 0 6px 20px rgba(124,58,237,0.45); }
-    .btn--primary:active { transform: translateY(0); }
- 
-    /* ── Drop zone ─────────────────────────────────────────────── */
+    /* Drop zone */
     .drop-zone {
       margin: 20px 24px;
       border: 2px dashed var(--c-border2);
@@ -320,7 +311,7 @@
       color: var(--c-text-muted);
     }
  
-    /* ── Upload queue ──────────────────────────────────────────── */
+    /* Upload queue */
     .upload-queue { margin: 0 24px 20px; display: flex; flex-direction: column; gap: 8px; }
  
     .queue-label {
@@ -352,7 +343,7 @@
     .qi-name  { font-size: 13.5px; font-weight: 500; color: var(--c-text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
     .qi-meta  { font-size: 11.5px; color: var(--c-text-muted); margin-top: 2px; }
  
-    /* Status badges — one per DocumentStatus enum value */
+    /* Status badges */
     .qi-badge {
       display: inline-flex;
       align-items: center;
@@ -384,7 +375,7 @@
  
     .qi-remove:hover { color: var(--c-red); }
  
-    /* ── KB files table ────────────────────────────────────────── */
+    /* KB files table */
     .section-divider { border-top: 1px solid var(--c-border); margin: 0 24px; }
     .kb-table-wrap   { padding: 20px 24px 24px; }
     .kb-table-head   { margin-bottom: 14px; }
@@ -430,10 +421,10 @@
  
     .td-muted { color: var(--c-text-muted); }
 
-    /* ── File input (hidden, triggered by drop zone) ───────────── */
+    /* File input (hidden, triggered by drop zone) */
     #file-input { display: none; }
 
-    /* ── Extract row & output ──────────────────────────────────── */
+    /* Extract row & output */
     .extract-row {
       display: flex;
       align-items: center;
@@ -533,11 +524,6 @@
       display: flex;
       align-items: center;
       gap: 12px;
-      animation: url-fade-in 0.2s ease-out;
-    }
-    @keyframes url-fade-in {
-      from { opacity: 0; transform: translateY(-4px); }
-      to   { opacity: 1; transform: translateY(0); }
     }
 
     .url-item-icon {
@@ -575,8 +561,7 @@
     }
     .url-item-remove:hover { color: var(--c-red); }
 
-    /* ── Button — matches Extract Text screenshot ─────────────── */
-    /* Flat, subtle gradient, NO outer glow, chunky padding, generous radius */
+    /* Primary action button */
     .btn-purple {
       display: inline-flex;
       align-items: center;
@@ -586,28 +571,17 @@
       font-family: var(--font);
       font-size: 17px;
       font-weight: 700;
-      letter-spacing: 0.2px;
       cursor: pointer;
       border: none;
       color: #fff;
-      background: linear-gradient(135deg, #8b5cf6 0%, #6d28d9 100%);
-      /* Thin top-edge highlight only — no outer glow */
-      box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.18);
-      transition: filter 0.15s ease, transform 0.1s ease;
+      background: var(--c-purple);
+      transition: background 0.15s;
       flex-shrink: 0;
       white-space: nowrap;
     }
-    .btn-purple:hover:not(:disabled) {
-      filter: brightness(1.08);
-    }
-    .btn-purple:active:not(:disabled) {
-      transform: translateY(1px);
-      filter: brightness(0.95);
-    }
-    .btn-purple:disabled {
-      opacity: 0.4;
-      cursor: not-allowed;
-    }
+    .btn-purple:hover:not(:disabled) { background: #6d28d9; }
+    .btn-purple:active:not(:disabled) { background: var(--c-purple-d); }
+    .btn-purple:disabled { opacity: 0.4; cursor: not-allowed; }
 
     /* Counter pill */
     .url-counter {

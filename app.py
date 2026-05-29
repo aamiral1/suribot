@@ -11,19 +11,17 @@ from openai import OpenAI
 from werkzeug.utils import secure_filename
 from database import Database
 from doc_parser import extract_doc_info
-from chunker import chunk_text, chunk_text_recursive, chunk_text_fixed
-from config import ChunkingStrategy, get_chunking_strategy, get_retrieval_alpha
+from chunker import chunk_text_fixed
+from config import ChunkingStrategy
 from embedder import embed_chunks
-from pinecone_store import get_or_create_index, upsert_chunks, hybrid_query, query_index
+from pinecone_store import get_or_create_index, upsert_embeddings, query_index
 from hybrid_retriever import hybrid_retrieve
-from structured_chunker import split_into_sections, chunk_sections_with_fallback
 from sales_controller import SalesController
-from response_generator import generate_final_response, retrieve_relevant_chunks
+from response_generator import generate_final_response, retrieve_relevant_chunks, rewrite_rag_query
 from calendar_service import get_available_slots, create_booking, reschedule_booking
 import custom_exceptions as cal_ex
 from crawler import crawl_url
-from web_chunker import clean_markdown, markdown_to_sections, detect_dominant_level
-import bm25_encoder as bm25_enc
+from web_chunker import clean_markdown
 from enums import DocumentStatus, SourceType, AllowedFileTypes
 import boto3
 import botocore
@@ -117,6 +115,30 @@ SYSTEM_PROMPT = """
         - “Happy to show you exactly how this would work for your business on a call”
 
         - You are representing a real company, so responses should feel grounded, confident, and aligned with a real service offering — not hypothetical
+
+        Write in a way that feels human, natural, and professional and fOLLOW these rules:
+        * Use clear, direct language.
+        * Keep sentences short and sharp.
+        * Write in active voice.
+        * Give practical, specific advice.
+        * Use bullet points when listing items.
+        * Include data, numbers, or concrete examples when possible.
+        * Speak directly to the reader using "you" and "your."
+        * The output should read clean, concise, and natural—like something a human wrote. 
+        * Before finalizing, review and ensure there are no em dashes.
+
+        DO NOT:
+        * Use em dashes (only commas, periods, or semicolons are allowed).
+        * Add filler phrases that connect ideas too loosely.
+        * Use constructions like "not just X, but Y."
+        * Use metaphors, analogies, or clichés.
+        * Make vague or sweeping claims.
+        * Use phrases like "in conclusion," "to sum up," or "closing."
+        * Overuse adjectives or adverbs.
+        * Use hashtags, markdown, or asterisks.
+
+        AVOID these words and phrases: 
+        Elevate, Delve, Hustle and bustle, Revolutionize, Foster, Realm, Remnant, Subsequently, Nestled, Enigma, Whispering, Sights unseen, Sounds unheard, A testament to, Dance, Metamorphosis, Indelible, Leverage, Synergy, Scalable, Optimize, Empower, Innovative, Disruptive, Robust, Seamless, Holistic, Cutting-edge, Next-generation, User-centric, Agile, Dynamic, Frictionless, Scalability, Mission-critical, Thought leadership, Turnkey, Paradigm shift, Game-changer, Ecosystem, Deep dive, Move the needle, Circle back, Actionable insights, and other corporate AI buzzwords.
         """
 
 app = Flask(__name__)
@@ -137,15 +159,9 @@ def login_required(f):
 client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"), timeout=20)
 sales_controller = SalesController(client=client)
 
-response = client
-
 # Initialise Postgres Database
 db = Database("document_database.db", "documents")
 db.init_schema()
-
-# Retrieval alpha — read from RETRIEVAL_STRATEGY in .env (hybrid=0.5, dense=1.0, sparse=0.0)
-retrieval_alpha = get_retrieval_alpha()
-
 
 # Initialise AWS S3 Client
 s3 = boto3.resource(
@@ -161,6 +177,10 @@ bucket_name = os.getenv("AWS_S3_BUCKET")
 @app.route("/")
 def home():
     return render_template("index.html")
+
+@app.route("/embed")
+def embed():
+    return render_template("embed.html")
 
 
 _LONDON = ZoneInfo("Europe/London")
@@ -256,16 +276,13 @@ def _resolve_selected_slot(controller_output: dict, day_lookup: dict):
 def _handle_offer_slots(controller_output: dict, day_lookup: dict, lead_profile: dict) -> dict:
     try:
         start, end = _resolve_booking_window(controller_output, day_lookup, lead_profile)
-        print(f"[SLOTS] Searching {start.isoformat()} → {end.isoformat()}")
         slots = get_available_slots(start, end)
-        print(f"[SLOTS] Found: {slots}")
         if not slots:
             return {"status": "no_slots_available"}
         return {"status": "slots_available", "slots": slots}
     except cal_ex.CalendarAuthError:
         return {"status": "calendar_unavailable"}
-    except cal_ex.CalendarServiceError as e:
-        print(f"[BOOKING] Calendar service error: {e}")
+    except cal_ex.CalendarServiceError:
         return {"status": "calendar_error"}
 
 
@@ -301,8 +318,7 @@ def _handle_book_appointment(controller_output: dict, day_lookup: dict, lead_pro
         return {"status": "slot_taken", "slots": slots}
     except cal_ex.CalendarAuthError:
         return {"status": "calendar_unavailable"}
-    except cal_ex.CalendarServiceError as e:
-        print(f"[BOOKING] Error creating booking: {e}")
+    except cal_ex.CalendarServiceError:
         return {"status": "calendar_error"}
 
 
@@ -311,7 +327,7 @@ def _handle_reschedule(controller_output: dict, day_lookup: dict, lead_profile: 
 
     if not provided:
         # No email yet — show slots so the user can pick a time while we ask for their email
-        start, end = _resolve_booking_window(controller_output, day_lookup, lead_profile)
+        start, end = _resove_booking_window(controller_output, day_lookup, lead_profile)
         try:
             slots = get_available_slots(start, end)
         except cal_ex.CalendarServiceError:
@@ -343,8 +359,7 @@ def _handle_reschedule(controller_output: dict, day_lookup: dict, lead_profile: 
         return {"status": "slot_taken", "slots": slots}
     except cal_ex.CalendarAuthError:
         return {"status": "calendar_unavailable"}
-    except cal_ex.CalendarServiceError as e:
-        print(f"[BOOKING] Reschedule error: {e}")
+    except cal_ex.CalendarServiceError:
         return {"status": "calendar_error"}
 
 
@@ -361,13 +376,15 @@ class ChatbotAPI(Resource):
         user_message = args["message"]
         session_id = args["session_id"]
 
+        if session_id:
+            db.ensure_session(session_id)
+
         # Retrieve Information
         history = db.get_conversation_history(session_id, limit=10)
         lead_profile = db.get_lead_profile(session_id)
-        last_actions = db.get_last_actions(session_id, limit=3)
+        last_actions = db.get_last_actions(session_id, limit=5)
 
         sales_turn = db.get_sales_turn_count(session_id)
-        print(f"[DEBUG] session_id={session_id!r}  sales_turn={sales_turn!r}")
 
         # Invoke Controller's output
         now_london = datetime.now(_LONDON)
@@ -390,7 +407,8 @@ class ChatbotAPI(Resource):
         controller_output = sales_controller.apply_guardrails(
             controller_output=controller_output,
             lead_profile=lead_profile,
-            sales_turn=sales_turn
+            sales_turn=sales_turn,
+            last_actions=last_actions
         )
 
         # extract parameter from controller output
@@ -414,7 +432,8 @@ class ChatbotAPI(Resource):
         rag_context = ""
 
         if controller_output.get("requires_rag"):
-            rag_context = retrieve_relevant_chunks(client, user_message, retrieval_alpha)
+            rag_query = rewrite_rag_query(client, user_message, history, lead_profile)
+            rag_context = retrieve_relevant_chunks(client, rag_query)
 
         booking_result = None
 
@@ -539,8 +558,8 @@ class ExtractedDocumentTextAPI(Resource):
         try:
             if _file_exists(s3, s3_bucket, s3_key):
                 text = _get_file_text(s3, s3_bucket, s3_key)
-        except Exception as e:
-            print(f"[ExtractedTextAPI] S3 error for {doc_id}: {e}")
+        except Exception:
+            pass
 
         return jsonify({"text": text})
 
@@ -592,231 +611,56 @@ def get_kb_status(doc_id):
 
 
 def _chunk_and_embed_job(doc_id):
-    strategy = get_chunking_strategy()
-    print(
-        f"\n[KB] Starting chunk + embed job for doc: {doc_id} (strategy: {strategy.value})"
-    )
     try:
-        # fetch extracted text from S3
         s3_bucket, s3_key = db.get_extracted_text_file_path(doc_id)
         text = _get_file_text(s3, s3_bucket, s3_key)
+        text = re.sub(r"\[HEADING\]\s*", "", text)
 
-        # chunk using selected strategy
-        print(f"[KB] Chunking text ({len(text)} chars)...")
-        if strategy == ChunkingStrategy.SECTION_AND_SEMANTIC:
-            chunks = chunk_sections_with_fallback(
-                text, api_key=os.getenv("OPENAI_API_KEY")
-            )
-        else:
-            clean_text = re.sub(r"\[HEADING\]\s*", "", text)
-            if strategy == ChunkingStrategy.RECURSIVE_TOKEN:
-                chunks = chunk_text_recursive(clean_text)
-            elif strategy == ChunkingStrategy.FIXED_SIZE:
-                chunks = chunk_text_fixed(clean_text)
-            else:  # SEMANTIC_ONLY
-                chunks = chunk_text(clean_text, api_key=os.getenv("OPENAI_API_KEY"))
-        print(f"[KB] Produced {len(chunks)} chunks.")
-
-        # embed (dense)
+        chunks = chunk_text_fixed(text)
         embedded_chunks = embed_chunks(client, chunks)
-
-        # drop chunks with no alphabetic content — BM25 cannot encode them
-        before = len(embedded_chunks)
         embedded_chunks = [c for c in embedded_chunks if any(ch.isalpha() for ch in c["text"])]
-        if len(embedded_chunks) < before:
-            print(f"[KB] Filtered out {before - len(embedded_chunks)} punctuation-only chunk(s).")
 
-        # build chunk rows for document_chunks
-        chunk_rows = [
-            {
-                "chunk_id": c["chunk_index"],
-                "text": c["text"],
-                "heading": None,
-            }
-            for c in embedded_chunks
-        ]
-
-        # encode sparse vectors
-        encoder = bm25_enc.get_encoder()
-        texts = [c["text"] for c in embedded_chunks]
-        if encoder is not None:
-            sparse_vectors = bm25_enc.encode_documents(encoder, texts)
-            if any(not sv.get("indices") for sv in sparse_vectors):
-                print("[KB] Empty sparse vectors detected (stale encoder) — refitting on current chunks.")
-                encoder = bm25_enc.fit_and_save(texts, s3, bucket_name)
-                sparse_vectors = bm25_enc.encode_documents(encoder, texts)
-        else:
-            encoder = bm25_enc.fit_and_save(texts, s3, bucket_name)
-            sparse_vectors = bm25_enc.encode_documents(encoder, texts)
-
-        # build format expected by upsert_chunks
-        chunks_for_upsert = [
-            {
-                "chunk_id": c["chunk_index"],
-                "text": c["text"],
-                "embedding": c["embedding"],
-            }
-            for c in embedded_chunks
-        ]
-
-        # upsert to Pinecone with dense + sparse vectors
-        print(f"[KB] Upserting {len(chunks_for_upsert)} hybrid vectors to Pinecone...")
         pinecone_index = get_or_create_index(
             api_key=os.getenv("PINECONE_API_KEY"),
             index_name=os.getenv("PINECONE_INDEX_NAME"),
         )
-        upsert_chunks(pinecone_index, doc_id, chunks_for_upsert, sparse_vectors)
+        upsert_embeddings(pinecone_index, doc_id, embedded_chunks)
 
-        # persist chunk rows to document_chunks table
-        db.insert_chunks(doc_id, chunk_rows)
-        print(f"[KB] Inserted {len(chunk_rows)} rows into document_chunks.")
-
-        # refit and save BM25 encoder with updated corpus
-        all_chunks = db.get_all_chunks()
-        bm25_enc.fit_and_save(
-            [c["text"] for c in all_chunks],
-            s3,
-            bucket_name,
-        )
-
-        # mark document as in KB
         db.set_in_kb(doc_id)
         db.set_kb_status(doc_id, "success")
-        print(f"[KB] Document {doc_id} marked as in_kb=TRUE in database.")
 
-    except Exception as e:
-        print(f"[KB] Error during chunk + embed job: {e}")
+    except Exception:
         db.set_kb_status(doc_id, "failed")
 
 
 def _crawl_and_embed_job(url_id, url):
-    strategy = get_chunking_strategy()
-    print(
-        f"\n[WEB] Starting crawl + embed job for url_id: {url_id} (strategy: {strategy.value})"
-    )
     try:
         db.set_url_crawl_status(url_id, "processing")
 
-        # crawl URL and get markdown
         raw_markdown = asyncio.run(crawl_url(url))
-        print(f"[WEB] Crawled {url} — {len(raw_markdown)} chars of markdown")
-        print(
-            f"\n[WEB] ── Full extracted markdown ──────────────────────\n{raw_markdown}\n──────────────────────────────────────────────────────\n"
-        )
-        # clean noise (all strategies)
-        cleaned = clean_markdown(raw_markdown)
-        print(
-            f"\n[WEB] ── Full cleaned markdown ──────────────────────\n{cleaned}\n──────────────────────────────────────────────────────\n"
-        )
-        # clean noise (all strategies)
+        text = clean_markdown(raw_markdown)
 
-        # section-based only: detect dominant header and insert [HEADING] markers
-        if strategy == ChunkingStrategy.SECTION_AND_SEMANTIC:
-            dominant = detect_dominant_level(cleaned)
-            print(f"[WEB] Dominant header tag selected: {dominant}")
-            text = markdown_to_sections(cleaned)
-            print(
-                f"\n[WEB] ── Section Chunked Markdown ──────────────────────\n{text}\n──────────────────────────────────────────────────────\n"
-            )
-
-        else:
-            text = cleaned
-
-        # upload processed text to S3
         s3_key = f"{url_id}.txt"
         s3.meta.client.put_object(
             Bucket=bucket_name, Key=s3_key, Body=text.encode("utf-8")
         )
         db.set_url_text_path(url_id, bucket_name, s3_key)
 
-        # chunk using selected strategy
-        print(f"[WEB] Chunking text ({len(text)} chars)...")
-        if strategy == ChunkingStrategy.SECTION_AND_SEMANTIC:
-            chunks = chunk_sections_with_fallback(
-                text, api_key=os.getenv("OPENAI_API_KEY")
-            )
-        elif strategy == ChunkingStrategy.RECURSIVE_TOKEN:
-            chunks = chunk_text_recursive(text)
-        elif strategy == ChunkingStrategy.FIXED_SIZE:
-            chunks = chunk_text_fixed(text)
-        else:  # SEMANTIC_ONLY
-            chunks = chunk_text(text, api_key=os.getenv("OPENAI_API_KEY"))
-        print(f"[WEB] Produced {len(chunks)} chunks.")
-        for i, chunk in enumerate(chunks):
-            print(
-                f"\n[WEB] ── Chunk {i+1}/{len(chunks)} ──────────────────────────────\n{chunk}\n"
-            )
-
-        # embed (dense)
+        chunks = chunk_text_fixed(text)
         embedded_chunks = embed_chunks(client, chunks)
-
-        # drop chunks with no alphabetic content — BM25 cannot encode them
-        before = len(embedded_chunks)
         embedded_chunks = [c for c in embedded_chunks if any(ch.isalpha() for ch in c["text"])]
-        if len(embedded_chunks) < before:
-            print(f"[WEB] Filtered out {before - len(embedded_chunks)} punctuation-only chunk(s).")
 
-        # build chunk rows for webpage_chunks
-        chunk_rows = [
-            {
-                "chunk_id": c["chunk_index"],
-                "text": c["text"],
-                "heading": None,
-            }
-            for c in embedded_chunks
-        ]
-
-        # encode sparse vectors
-        encoder = bm25_enc.get_encoder()
-        texts = [c["text"] for c in embedded_chunks]
-        if encoder is not None:
-            sparse_vectors = bm25_enc.encode_documents(encoder, texts)
-            if any(not sv.get("indices") for sv in sparse_vectors):
-                print("[WEB] Empty sparse vectors detected (stale encoder) — refitting on current chunks.")
-                encoder = bm25_enc.fit_and_save(texts, s3, bucket_name)
-                sparse_vectors = bm25_enc.encode_documents(encoder, texts)
-        else:
-            encoder = bm25_enc.fit_and_save(texts, s3, bucket_name)
-            sparse_vectors = bm25_enc.encode_documents(encoder, texts)
-
-        # build format expected by upsert_chunks
-        chunks_for_upsert = [
-            {
-                "chunk_id": c["chunk_index"],
-                "text": c["text"],
-                "embedding": c["embedding"],
-            }
-            for c in embedded_chunks
-        ]
-
-        # upsert to Pinecone with dense + sparse vectors
-        print(f"[WEB] Upserting {len(chunks_for_upsert)} hybrid vectors to Pinecone...")
         pinecone_index = get_or_create_index(
             api_key=os.getenv("PINECONE_API_KEY"),
             index_name=os.getenv("PINECONE_INDEX_NAME"),
         )
-        upsert_chunks(pinecone_index, url_id, chunks_for_upsert, sparse_vectors)
+        upsert_embeddings(pinecone_index, url_id, embedded_chunks)
 
-        # persist chunk rows to webpage_chunks table
-        db.insert_webpage_chunks(url_id, chunk_rows)
-        print(f"[WEB] Inserted {len(chunk_rows)} rows into webpage_chunks.")
-
-        # refit and save BM25 encoder with updated corpus (docs + webpages)
-        all_chunks = db.get_all_chunks()
-        bm25_enc.fit_and_save(
-            [c["text"] for c in all_chunks],
-            s3,
-            bucket_name,
-        )
-
-        # mark as in KB
         db.set_url_in_kb(url_id)
         db.set_url_kb_status(url_id, "success")
         db.set_url_crawl_status(url_id, "success")
-        print(f"[WEB] URL {url_id} marked as in_kb=TRUE.")
 
     except Exception as e:
-        print(f"[WEB] Error during crawl + embed job: {e}")
         db.set_url_crawl_status(url_id, "failed")
         db.set_url_kb_status(url_id, "failed")
         db.set_url_error(url_id, str(e))
@@ -833,7 +677,6 @@ def query_kb():
     pc = Pinecone(api_key=os.getenv("PINECONE_API_KEY"))
     index_name = os.getenv("PINECONE_INDEX_NAME")
     if index_name not in [i.name for i in pc.list_indexes()]:
-        print("No vector database available")
         return jsonify({"results": []}), 200
 
     pinecone_index = pc.Index(index_name)
@@ -842,7 +685,6 @@ def query_kb():
         client=client,
         pinecone_index=pinecone_index,
         top_k=2,
-        alpha=retrieval_alpha,
     )
     return jsonify({"results": results}), 200
 
@@ -868,14 +710,12 @@ def test_rag():
         client=client,
         pinecone_index=pinecone_index,
         top_k=2,
-        alpha=retrieval_alpha,
     )
 
     return (
         jsonify(
             {
                 "query": query,
-                "alpha": retrieval_alpha,
                 "results": [
                     {
                         "rank": i + 1,
@@ -892,21 +732,6 @@ def test_rag():
     )
 
 
-@app.route("/config/alpha", methods=["POST"])
-@login_required
-def set_alpha():
-    global retrieval_alpha
-    data = request.get_json()
-    alpha = data.get("alpha")
-    if (
-        alpha is None
-        or not isinstance(alpha, (int, float))
-        or not (0.0 <= alpha <= 1.0)
-    ):
-        return jsonify({"error": "alpha must be a number between 0.0 and 1.0"}), 400
-    retrieval_alpha = float(alpha)
-    print(f"[config] retrieval_alpha updated to {retrieval_alpha}")
-    return jsonify({"alpha": retrieval_alpha}), 200
 
 
 # Admin Dashboard
@@ -924,23 +749,18 @@ def admin():
         return render_template("admin.html", form=form, active_page="files")
 
     if form.validate_on_submit():
-        file = form.file.data  # get the uploaded file data sent from frontend
+        file = form.file.data
         file_name = secure_filename(file.filename)
         file_size = str(_format_size(_get_file_size(file)))
         file_type = AllowedFileTypes.from_filename(file_name)
 
-        # check if file already exists in S3 bucket
         if _file_exists(s3, bucket_name, file_name):
-            print("File already exits")
-
             msg = {"status": "fail", "error": "File already exists"}
 
             return jsonify(msg), 400
 
-        # upload file to S3 storage
         s3.meta.client.upload_fileobj(file, bucket_name, file_name)
 
-        # Register file entry in database
         doc_type = request.form.get("doc_type", "knowledge_base")
         doc_id = db.create(
             source_type=SourceType.UPLOAD.value,
@@ -963,9 +783,6 @@ def admin():
             "s3_file_key": file_name,
         }
 
-        print("File has been uploaded succesfully.")
-        print(f"Current status of file is {db.get_status(doc_id)}")
-
         return jsonify(msg), 200
 
     else:
@@ -976,9 +793,6 @@ def admin():
 @app.route("/extract-text", methods=["POST"])
 @login_required
 def extract_text():
-    # wrapper function to thread extraction: Replace with Celery later
-
-    # AWS S3 - CONTINUE FROM HERE!
     def extraction_job(doc_id, file_path):
         file_name = doc_id + ".txt"
         isSuccess = False
@@ -997,7 +811,6 @@ def extract_text():
                 ContentType="text/plain",
             )
 
-            # register extracted text file path in database
             try:
                 db.set_extraction_text_path(
                     doc_id=doc_id,
@@ -1007,12 +820,10 @@ def extract_text():
 
                 isSuccess = True
 
-            except Exception as e:
-                print("Failed to update extracted file path of document")
+            except Exception:
                 raise
 
             try:
-                # update document status based on whether extracted text file exists
                 if isSuccess:
                     db.transition_status(
                         doc_id=doc_id, new_status=DocumentStatus.SUCCESS
@@ -1030,38 +841,31 @@ def extract_text():
                 db.transition_status(doc_id=doc_id, new_status=DocumentStatus.FAILED)
                 raise
 
-        except ex.InvalidDocumentStatusTransition as e:
+        except ex.InvalidDocumentStatusTransition:
             db.transition_status(doc_id=doc_id, new_status=DocumentStatus.FAILED)
-            print(e)
 
-        except ex.ExtractionTimeOut as e:
+        except ex.ExtractionTimeOut:
             db.transition_status(doc_id=doc_id, new_status=DocumentStatus.FAILED)
-            print(e)
 
-        except Exception as e:
+        except Exception:
             db.transition_status(doc_id=doc_id, new_status=DocumentStatus.FAILED)
-            print(f"Error: {e}")
 
         finally:
             if file_path and os.path.exists(file_path):
                 os.remove(file_path)
 
-    # get doc id from POST request
     data = request.get_json()
-    print(data)
     doc_id = data["doc_id"]
 
     # Check if document is valid to be processed
     doc_status = db.get_status(doc_id)
 
     if doc_status == DocumentStatus.CREATED or doc_status == DocumentStatus.FAILED:
-        # update doc status to Processing and perform extraction
         try:
             db.transition_status(
                 doc_id=doc_id, new_status=DocumentStatus.PROCESSING
-            )  # set doc status to processing
+            )
 
-            # extract file path from doc_id based on DB
             s3_bucket, s3_key = db.get_file_path(doc_id)
             local_file_path = _download_s3_file_to_temp(s3, s3_bucket, s3_key)
 
@@ -1080,7 +884,6 @@ def extract_text():
         except Exception as e:
             msg = {"status": "failed", "message": str(e)}
             db.transition_status(doc_id=doc_id, new_status=DocumentStatus.FAILED)
-            print(f"Error: {e}")
             return jsonify(msg), 500
 
         msg = {"status": "began processing"}
@@ -1175,28 +978,19 @@ def logout():
     session.pop('logged_in', None)
     return redirect(url_for('login'))
 
-# AWS S3 Helper Functions
 def _file_exists(resource, bucket, key):
     try:
         resource.meta.client.head_object(Bucket=bucket, Key=key)
-        print(f"File: '{key}' found!")
         return True
     except botocore.exceptions.ClientError as e:
         if e.response["Error"]["Code"] == "404":
-            print(f"File'{key}' File does not exist!")
             return False
-        else:
-            print("Something else went wrong")
-            return False
+        return False
 
 
 def _get_file_text(resource, bucket, key):
-    # get the object
     response = resource.meta.client.get_object(Bucket=bucket, Key=key)
-
-    # Read the file contents
     file_content = response["Body"].read()
-
     return file_content.decode("utf-8")
 
 
@@ -1215,19 +1009,6 @@ def _format_size(size_bytes):
         size_bytes /= 1024
 
 
-def _get_file_type(filename: str) -> AllowedFileTypes:
-    if not filename or "." not in filename:
-        raise ex.InvalidFileType("Invalid file name")
-
-    ext = os.path.splitext(filename)[1].lower().strip(".")  # 'pdf'
-    ext_upper = ext.upper()  # 'PDF'
-
-    try:
-        return AllowedFileTypes(ext_upper)
-    except ValueError:
-        raise ex.InvalidFileType(f"Unsupported file type: {ext_upper}")
-
-
 def _download_s3_file_to_temp(s3_resource, bucket, key):
     suffix = os.path.splitext(key)[1] or ".tmp"
 
@@ -1239,16 +1020,6 @@ def _download_s3_file_to_temp(s3_resource, bucket, key):
     return tmp_path
 
 
-# Load BM25 encoder from S3 if available; otherwise fit from existing chunks
-_loaded_encoder = bm25_enc.load_from_s3(s3, bucket_name)
-if _loaded_encoder is None:
-    existing_chunks = db.get_all_chunks()
-    if existing_chunks:
-        bm25_enc.fit_and_save(
-            [c["text"] for c in existing_chunks],
-            s3,
-            bucket_name,
-        )
-
 if __name__ == "__main__":
-    app.run(debug=True)
+    debug = os.environ.get("FLASK_ENV") != "production"
+    app.run(debug=debug)

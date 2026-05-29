@@ -6,7 +6,6 @@ from zoneinfo import ZoneInfo
 _EMAIL_RE = re.compile(r'^[^@\s]+@[^@\s]+\.[^@\s]+$')
 
 class SalesController:
-    # Actions that the Sales Controller is allowed to choose from
     VALID_ACTIONS = {
         "ANSWER_WITH_RAG",
         "ANSWER_FROM_CONTEXT",
@@ -121,14 +120,14 @@ class SalesController:
         - booking_completed
         - contact_name
         - contact_email
-        - contact_phone
 
         Rules:
         1. If the user asks about pricing, packages, services, process, contracts, refunds, guarantees, results, or comparisons, set requires_rag = true.
         2. When it is appropriate to offer a booking, choose OFFER_AND_COLLECT — ask for name and email in the same response. Do not ask "would you like to book?" first.
         3. If the user provides contact details after OFFER_AND_COLLECT:
-            - Update contact_name, contact_email, and/or contact_phone in lead_profile_updates.
+            - Update contact_name and/or contact_email in lead_profile_updates. Do NOT ask for or store a phone number.
             - Only choose OFFER_AVAILABLE_SLOTS or BOOK_APPOINTMENT once BOTH contact_name AND contact_email are known (either from this message or already in the lead profile). If either is still missing, stay on OFFER_AND_COLLECT and ask for the missing field.
+        3a. Once OFFER_AND_COLLECT appears in the last assistant actions, completing the booking is the top priority. If contact_name and contact_email are now both known, choose OFFER_AVAILABLE_SLOTS immediately — even if the user's message is about something else. If either is still missing, stay on OFFER_AND_COLLECT. Do not revert to SPIN questioning or general answering until the booking is secured.
         4. If the user directly asks for a call, or signals that they want a call - Directly OFFER_AND_COLLECT.
         4. If the user directly asks to book at a specific time (e.g. "book me for Tuesday 3pm") and contact details are known, choose BOOK_APPOINTMENT directly — no need for OFFER_AND_COLLECT first.
         5. Do not choose BOOK_APPOINTMENT unless ALL THREE are known: (a) contact_name, (b) contact_email, AND (c) selected_slot.
@@ -171,8 +170,7 @@ class SalesController:
             "booking_offered": null,
             "booking_completed": null,
             "contact_name": null,
-            "contact_email": null,
-            "contact_phone": null
+            "contact_email": null
         },
         "reason": "brief internal reason",
         "requested_day": null,
@@ -193,7 +191,6 @@ class SalesController:
     def create_new_profile(cls):
         return cls.LEAD_PROFILE_SCHEMA.copy()
     
-    # enforce lead profile schema
     def normalise_profile(self, profile):
         if not isinstance(profile, dict):
             profile = {}
@@ -204,7 +201,6 @@ class SalesController:
             for key, default in self.LEAD_PROFILE_SCHEMA.items()
         }
     
-    # register lead profile updates
     def merge_profile(self, old_profile, updates):
         profile = self.normalise_profile(old_profile)
 
@@ -265,27 +261,16 @@ class SalesController:
                 """
             }
         ]
-        print(f"\n=== [CONTROLLER] SALES TURN: {sales_turn} ===")
-        print(messages[1]["content"])
-        print("==============================================\n")
-
         response = self.client.chat.completions.create(
             model=self.model, messages=messages, temperature=0, response_format={"type":"json_object"}
         )
 
         output = json.loads(response.choices[0].message.content)
 
-        print("\n=== [CONTROLLER] LLM OUTPUT ===")
-        print(json.dumps(output, indent=2))
-        print("================================\n")
-
         return output
 
-    def apply_guardrails(self, controller_output, lead_profile, sales_turn, threshold=3):
-        # print("\n=== [GUARDRAILS] INPUT ===")
-        # print(json.dumps(controller_output, indent=2))
-        # print("==========================\n")
-        # --- enforce output schema ---
+    def apply_guardrails(self, controller_output, lead_profile, sales_turn, last_actions=None, threshold=3):
+        # enforce output schema
         if not isinstance(controller_output, dict):
             controller_output = {}
 
@@ -312,7 +297,6 @@ class SalesController:
                       "selected_slot_day", "selected_slot_time", "provided_email"):
             if not isinstance(controller_output.get(field), (str, type(None))):
                 controller_output[field] = None
-        # --- end schema enforcement ---
 
         # enforce valid action — fallback if LLM returns something unexpected
         if controller_output.get("next_action") not in self.VALID_ACTIONS:
@@ -327,16 +311,6 @@ class SalesController:
             controller_output["requires_rag"] = False
             controller_output["requires_booking_tool"] = False
             return controller_output
-
-        # # low confidence fallback
-        # confidence = controller_output.get("confidence", 1.0)
-        # if confidence < 0.7:
-        #     if self._is_leadish(lead_profile):
-        #         controller_output["next_action"] = "OFFER_BOOKING"
-        #         controller_output["reason"] = "Low confidence + qualified lead — overriding to offer booking"
-        #     else:
-        #         controller_output["next_action"] = "ASK_CLARIFYING_QUESTION"
-        #         controller_output["reason"] = "Low confidence + unqualified lead — asking clarifying question"
 
         # block slot/booking actions if contact details are incomplete
         updates = controller_output.get("lead_profile_updates", {})
@@ -366,6 +340,20 @@ class SalesController:
             controller_output["lead_profile_updates"]["booking_offered"] = True
             return controller_output
 
+        # booking momentum — if OFFER_AND_COLLECT is in recent history and details are now complete, push to slots
+        booking_sequence = {"OFFER_AVAILABLE_SLOTS", "BOOK_APPOINTMENT", "CONFIRM_BOOKING", "RESCHEDULE_APPOINTMENT"}
+        recent_actions = last_actions or []
+        if (
+            "OFFER_AND_COLLECT" in recent_actions
+            and has_name
+            and has_email
+            and controller_output["next_action"] not in booking_sequence
+        ):
+            controller_output["next_action"] = "OFFER_AVAILABLE_SLOTS"
+            controller_output["reason"] = "OFFER_AND_COLLECT in recent history — pushing to slots"
+            controller_output["requires_booking_tool"] = True
+            controller_output["requires_rag"] = False
+
         # ensure booking actions have a resolvable slot
         if controller_output["next_action"] in {"BOOK_APPOINTMENT", "RESCHEDULE_APPOINTMENT"}:
             if not (controller_output.get("selected_slot_day") and controller_output.get("selected_slot_time")):
@@ -389,16 +377,10 @@ class SalesController:
         if action == "CONFIRM_BOOKING":
             controller_output["lead_profile_updates"]["booking_completed"] = True
 
-        print("\n=== [GUARDRAILS] OUTPUT ===")
-        print(json.dumps(controller_output, indent=2))
-        print("===========================\n")
-
         return controller_output
-
 
     def _is_leadish(self, profile):
         profile = self.normalise_profile(profile)
-
         return any([
             profile.get("business_type"),
             profile.get("main_goal"),

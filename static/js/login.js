@@ -1,4 +1,4 @@
-/* ── Password toggle ──────────────────────────────────────────── */
+/* Password toggle */
     const pwInput  = document.getElementById('password');
     const pwToggle = document.getElementById('pw-toggle');
     const eyeIcon  = document.getElementById('eye-icon');
@@ -13,7 +13,7 @@
       pwToggle.setAttribute('aria-label', showing ? 'Show password' : 'Hide password');
     });
  
-    /* ── Form submit ──────────────────────────────────────────────── */
+    /* Form submit */
     const form       = document.getElementById('login-form');
     const submitBtn  = document.getElementById('submit-btn');
     const errorBanner = document.getElementById('error-banner');
